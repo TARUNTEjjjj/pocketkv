@@ -1,0 +1,8 @@
+/build*/
+/install*/
+*.db
+*.db.*
+.pocketkv-*
+__pycache__/
+*.pyc
+.DS_Store

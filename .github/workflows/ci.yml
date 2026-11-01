@@ -1,0 +1,39 @@
+name: C++ checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: g++
+            type: Release
+            sanitizers: OFF
+          - os: ubuntu-latest
+            compiler: clang++
+            type: Debug
+            sanitizers: ON
+          - os: macos-latest
+            compiler: clang++
+            type: Release
+            sanitizers: OFF
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DPOCKETKV_SANITIZERS=${{ matrix.sanitizers }} -DPOCKETKV_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

@@ -1,0 +1,73 @@
+cmake_minimum_required(VERSION 3.20)
+project(PocketKV VERSION 0.1.0 LANGUAGES CXX)
+
+if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
+    message(FATAL_ERROR "PocketKV currently supports Linux and macOS (POSIX file I/O and flock).")
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+option(POCKETKV_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(POCKETKV_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+function(pocketkv_configure target)
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow)
+    if(POCKETKV_WARNINGS_AS_ERRORS)
+        target_compile_options(${target} PRIVATE -Werror)
+    endif()
+    if(POCKETKV_SANITIZERS)
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${target} PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+endfunction()
+
+add_library(pocketkv_lib STATIC src/store.cpp src/format.cpp)
+add_library(PocketKV::pocketkv ALIAS pocketkv_lib)
+set_target_properties(pocketkv_lib PROPERTIES OUTPUT_NAME pocketkv EXPORT_NAME pocketkv)
+target_include_directories(pocketkv_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_compile_features(pocketkv_lib PUBLIC cxx_std_20)
+pocketkv_configure(pocketkv_lib)
+
+add_executable(pocketkv app/main.cpp)
+set_target_properties(pocketkv PROPERTIES EXPORT_NAME cli)
+target_link_libraries(pocketkv PRIVATE PocketKV::pocketkv)
+pocketkv_configure(pocketkv)
+add_executable(pocketkv-example examples/basic.cpp)
+target_link_libraries(pocketkv-example PRIVATE PocketKV::pocketkv)
+pocketkv_configure(pocketkv-example)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(pocketkv-tests tests/test_store.cpp)
+    target_include_directories(pocketkv-tests PRIVATE src)
+    target_link_libraries(pocketkv-tests PRIVATE PocketKV::pocketkv)
+    pocketkv_configure(pocketkv-tests)
+    add_test(NAME storage-core COMMAND pocketkv-tests)
+    set_tests_properties(storage-core PROPERTIES TIMEOUT 120)
+    add_test(NAME cli-help COMMAND pocketkv --help)
+    find_package(Python3 3.9 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME cli-workflows COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py $<TARGET_FILE:pocketkv>)
+        set_tests_properties(cli-workflows PROPERTIES TIMEOUT 120)
+    else()
+        message(STATUS "Python 3.9+ unavailable: optional CLI workflow tests will not run.")
+    endif()
+    add_test(NAME installed-consumer COMMAND ${CMAKE_COMMAND}
+        -DPOCKET_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+        -DPOCKET_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DPOCKET_COMPILER=${CMAKE_CXX_COMPILER}
+        -DPOCKET_CONFIG=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/installed_consumer.cmake)
+    set_tests_properties(installed-consumer PROPERTIES TIMEOUT 120)
+endif()
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+install(TARGETS pocketkv_lib pocketkv EXPORT PocketKVTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT PocketKVTargets FILE PocketKVTargets.cmake NAMESPACE PocketKV:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PocketKV)
+configure_package_config_file(cmake/PocketKVConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/PocketKVConfig.cmake INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PocketKV)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/PocketKVConfigVersion.cmake VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/PocketKVConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/PocketKVConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PocketKV)
