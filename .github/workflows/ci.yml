@@ -17,6 +17,9 @@ jobs:
             compiler: g++
             type: Release
             sanitizers: OFF
+            install_bindir: tools/bin
+            install_libdir: lib64
+            install_includedir: headers
           - os: ubuntu-latest
             compiler: clang++
             type: Debug
@@ -25,6 +28,9 @@ jobs:
             compiler: clang++
             type: Release
             sanitizers: OFF
+            install_bindir: tools/bin
+            install_libdir: lib64
+            install_includedir: headers
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +38,15 @@ jobs:
         with:
           python-version: '3.12'
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DPOCKETKV_SANITIZERS=${{ matrix.sanitizers }} -DPOCKETKV_WARNINGS_AS_ERRORS=ON
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.type }}
+          -DPOCKETKV_SANITIZERS=${{ matrix.sanitizers }}
+          -DPOCKETKV_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_INSTALL_BINDIR=${{ matrix.install_bindir || 'bin' }}
+          -DCMAKE_INSTALL_LIBDIR=${{ matrix.install_libdir || 'lib' }}
+          -DCMAKE_INSTALL_INCLUDEDIR=${{ matrix.install_includedir || 'include' }}
       - name: Build
         run: cmake --build build --parallel 2
       - name: Test

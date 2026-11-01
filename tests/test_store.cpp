@@ -269,6 +269,69 @@ void partial_tail_recovery() {
     require(exact_boundary.get("stable") == "value", "exact record boundary is valid EOF");
 }
 
+void partial_length_validation() {
+    Temp temp;
+    auto base = external_header();
+    append(base, external_record(1, "stable", "value"));
+
+    struct InvalidLength {
+        std::uint8_t kind;
+        std::size_t field;
+        std::uint32_t value;
+        std::size_t cut;
+    };
+    const std::array<InvalidLength, 13> invalid{{
+        {1, 8, 0, 10}, {1, 8, 0, 11}, {1, 8, 0, 12},
+        {1, 8, 4097, 10}, {1, 8, 4097, 11}, {1, 8, 65535, 10},
+        {1, 8, 65536, 11}, {1, 8, 0xffffff, 11},
+        {1, 12, 1048577, 15}, {1, 12, 0xffffff, 15},
+        {2, 12, 1, 13}, {2, 12, 256, 14}, {2, 12, 65536, 15},
+    }};
+    for (const auto& test : invalid) {
+        auto tail = external_record(test.kind, "k", "");
+        put_u32(tail, test.field, test.value);
+        tail.resize(test.cut); // The checksum is absent; present length bytes suffice.
+        auto damaged = base;
+        append(damaged, tail);
+        for (const bool repair : {false, true}) {
+            write(temp.path(), damaged);
+            expect_error(ErrorCode::corruption, [&] {
+                Store db(temp.path(), {.create_if_missing=false, .repair_incomplete_tail=repair});
+            });
+            require(read(temp.path()) == damaged, "impossible partial length must preserve the entire file");
+        }
+    }
+
+    // These independently encoded records exercise carries between length
+    // bytes and the inclusive limits. A single zero key-length byte remains
+    // valid because a later byte can complete it to 256 or 4096.
+    std::vector<Bytes> valid;
+    for (const auto& [key_length, value_length] :
+         std::array<std::pair<std::size_t, std::size_t>, 6>{{
+             {1, 0}, {255, 255}, {256, 256}, {4095, 65535},
+             {4096, 65536}, {4096, Store::max_value_bytes}}}) {
+        valid.push_back(external_record(1, std::string(key_length, 'k'),
+                                         std::string(value_length, 'v')));
+    }
+    valid.push_back(external_record(2, std::string(256, 'k'), ""));
+    for (const auto& tail : valid) {
+        for (std::size_t cut = 1; cut < 24; ++cut) {
+            auto incomplete = base;
+            incomplete.insert(incomplete.end(), tail.begin(),
+                              tail.begin() + static_cast<std::ptrdiff_t>(cut));
+            write(temp.path(), incomplete);
+            expect_error(ErrorCode::incomplete_tail, [&] {
+                Store db(temp.path(), {.create_if_missing=false});
+            });
+            require(read(temp.path()) == incomplete, "valid partial header is preserved by a normal open");
+            Store repaired(temp.path(), {.create_if_missing=false, .repair_incomplete_tail=true});
+            require(repaired.repaired_bytes() == cut && read(temp.path()) == base,
+                    "every valid boundary-length header prefix remains repairable");
+            require(repaired.get("stable") == "value", "repair of a valid prefix preserves earlier data");
+        }
+    }
+}
+
 void corruption_is_not_repair() {
     Temp temp;
     auto header = external_header();
@@ -501,6 +564,7 @@ int main() {
         {"CRC and independent on-disk fixture", codec_and_external_fixture},
         {"deterministic operation ledger", map_oracle},
         {"every final-record truncation boundary", partial_tail_recovery},
+        {"partial lengths must admit a valid completion", partial_length_validation},
         {"corruption is rejected without mutation", corruption_is_not_repair},
         {"exclusive locking and abrupt process exit", locking_and_process_exit},
         {"simultaneous first creation is atomic", simultaneous_first_creation},

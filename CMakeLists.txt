@@ -8,6 +8,7 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+include(GNUInstallDirs)
 option(POCKETKV_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(POCKETKV_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
@@ -25,7 +26,7 @@ endfunction()
 add_library(pocketkv_lib STATIC src/store.cpp src/format.cpp)
 add_library(PocketKV::pocketkv ALIAS pocketkv_lib)
 set_target_properties(pocketkv_lib PROPERTIES OUTPUT_NAME pocketkv EXPORT_NAME pocketkv)
-target_include_directories(pocketkv_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_include_directories(pocketkv_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(pocketkv_lib PUBLIC cxx_std_20)
 pocketkv_configure(pocketkv_lib)
 
@@ -45,6 +46,21 @@ if(BUILD_TESTING)
     pocketkv_configure(pocketkv-tests)
     add_test(NAME storage-core COMMAND pocketkv-tests)
     set_tests_properties(storage-core PROPERTIES TIMEOUT 120)
+
+    # Substitute syscalls in a separate Store object only. The installed library
+    # has no fault hooks; the test wrappers can still call the real OS functions.
+    add_library(pocketkv_fault_store OBJECT src/store.cpp)
+    target_include_directories(pocketkv_fault_store PRIVATE include)
+    target_compile_definitions(pocketkv_fault_store PRIVATE
+        fsync=pocketkv_test_fsync pread=pocketkv_test_pread)
+    pocketkv_configure(pocketkv_fault_store)
+    add_executable(pocketkv-fault-tests tests/test_faults.cpp src/format.cpp)
+    target_include_directories(pocketkv-fault-tests PRIVATE include)
+    target_link_libraries(pocketkv-fault-tests PRIVATE pocketkv_fault_store)
+    pocketkv_configure(pocketkv-fault-tests)
+    add_test(NAME storage-faults COMMAND pocketkv-fault-tests)
+    set_tests_properties(storage-faults PROPERTIES TIMEOUT 120)
+
     add_test(NAME cli-help COMMAND pocketkv --help)
     find_package(Python3 3.9 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
@@ -53,16 +69,23 @@ if(BUILD_TESTING)
     else()
         message(STATUS "Python 3.9+ unavailable: optional CLI workflow tests will not run.")
     endif()
-    add_test(NAME installed-consumer COMMAND ${CMAKE_COMMAND}
-        -DPOCKET_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
-        -DPOCKET_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-        -DPOCKET_COMPILER=${CMAKE_CXX_COMPILER}
-        -DPOCKET_CONFIG=$<CONFIG>
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/installed_consumer.cmake)
-    set_tests_properties(installed-consumer PROPERTIES TIMEOUT 120)
+    if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}" AND
+       NOT IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}" AND
+       NOT IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
+        add_test(NAME installed-consumer COMMAND ${CMAKE_COMMAND}
+            -DPOCKET_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -DPOCKET_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DPOCKET_COMPILER=${CMAKE_CXX_COMPILER}
+            -DPOCKET_CONFIG=$<CONFIG>
+            -DPOCKET_BINDIR=${CMAKE_INSTALL_BINDIR}
+            -DPOCKET_LIBDIR=${CMAKE_INSTALL_LIBDIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/installed_consumer.cmake)
+        set_tests_properties(installed-consumer PROPERTIES TIMEOUT 120)
+    else()
+        message(STATUS "Isolated installation test requires relative install directories; skipping it for absolute destinations.")
+    endif()
 endif()
 
-include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 install(TARGETS pocketkv_lib pocketkv EXPORT PocketKVTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -20,7 +20,18 @@ void usage(std::ostream& out) {
         << "  verify             Validate the entire database without repairing it\n"
         << "  repair             Truncate only a structurally incomplete final record\n\n"
         << "Global options: --help, --version\n"
-        << "Exit codes: 0 success; 1 missing key; 2 invalid input or database error.\n";
+        << "Exit codes: 0 success; 1 missing key; 2 invalid input, database or output error.\n";
+}
+
+int finish_output() {
+    // A buffered write can fail only when flushed. Mutations may already have
+    // committed successfully even if their acknowledgement cannot be printed.
+    std::cout.flush();
+    if (!std::cout) {
+        std::cerr << "error: could not write command output\n";
+        return 2;
+    }
+    return 0;
 }
 
 std::string escaped(std::string_view input) {
@@ -49,11 +60,11 @@ int missing() {
 int main(int argc, char* argv[]) {
     if (argc == 2 && std::string_view(argv[1]) == "--version") {
         std::cout << "PocketKV 0.1.0\n";
-        return 0;
+        return finish_output();
     }
     if (argc == 2 && (std::string_view(argv[1]) == "--help" || std::string_view(argv[1]) == "-h")) {
         usage(std::cout);
-        return 0;
+        return finish_output();
     }
     if (argc < 3) {
         usage(std::cerr);
@@ -68,6 +79,19 @@ int main(int argc, char* argv[]) {
         return 2;
     }
     try {
+        // Validate command arguments before opening a Store: a rejected put
+        // must not create a database as a side effect of constructor success.
+        if (one_argument || command == "put") {
+            const std::string_view key(argv[3]);
+            if (key.empty() || key.size() > pocketkv::Store::max_key_bytes) {
+                throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument,
+                                      "key must contain 1 to 4096 bytes");
+            }
+        }
+        if (command == "put" && std::string_view(argv[4]).size() > pocketkv::Store::max_value_bytes) {
+            throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument,
+                                  "value exceeds the 1048576-byte limit");
+        }
         pocketkv::Options options;
         options.create_if_missing = command == "init" || command == "put";
         options.repair_incomplete_tail = command == "repair";
@@ -100,12 +124,7 @@ int main(int argc, char* argv[]) {
                           << "live_value_bytes: " << info.live_value_bytes << '\n';
             }
         }
-        std::cout.flush();
-        if (!std::cout) {
-            std::cerr << "error: could not write command output\n";
-            return 2;
-        }
-        return 0;
+        return finish_output();
     } catch (const pocketkv::Error& error) {
         std::cerr << "error: " << escaped(error.what()) << '\n';
         if (error.code() == pocketkv::ErrorCode::incomplete_tail)

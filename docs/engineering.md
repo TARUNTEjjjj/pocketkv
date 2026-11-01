@@ -70,6 +70,12 @@ incomplete, and cannot verify bytes that are missing. It refuses invalid full
 headers, checksum failures in complete payloads, and an incomplete file header.
 It never skips a bad record to search for a later one.
 
+Present bytes of an incomplete little-endian length constrain every possible
+completion. The validator computes the smallest completion in the allowed range
+and rejects the prefix if none exists. This also rejects all-zero partial key
+lengths once any nonzero missing byte would exceed the key limit. It preserves
+genuine partial headers at valid length boundaries.
+
 Reads validate the indexed header, payload checksum, and key. Size checks detect
 external growth/truncation. These are useful diagnostics, not protection against
 uncooperative concurrent edits or malicious file substitution.
@@ -82,6 +88,28 @@ error. Device caches, filesystem behavior, and OS guarantees matter. This projec
 does not claim physical power-loss durability or network-filesystem support.
 The tests distinguish a child process exiting without a Store destructor from
 actual system power loss; only the former is exercised.
+
+A separate test executable compiles the Store with `fsync` and `pread` redirected
+to controlled wrappers. The wrappers inject EIO, EINTR and short reads, then call
+the real system functions for ordinary operations. Tests verify that failed syncs
+are never acknowledged, that later operations reject an uncertain writer, and
+that a complete failed write can still appear after reopen. Read failures preserve
+the file and failed constructors release their locks. Production library objects
+are compiled without the substitutions. These tests simulate syscall outcomes;
+they do not simulate a physical power failure.
+
+## CLI and installation
+
+The CLI checks key/value bounds before opening a Store. It also flushes and checks
+stdout for all output commands. A failure writing a mutation's acknowledgement
+returns status 2 after the data operation may already have completed; there is no
+rollback implied by that output error.
+
+The CMake package exports the configured header directory. Installation tests move
+the prefix, run CLI put/get commands, and build a separate library consumer. CI
+checks both the default layout and custom `tools/bin`, `lib64`, and `headers`
+directories. Isolated installation tests are skipped for absolute destinations
+because `cmake --install --prefix` cannot redirect them into scratch space.
 
 Useful system references:
 

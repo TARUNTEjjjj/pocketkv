@@ -23,7 +23,7 @@ struct RecordHeader {
 void validate_file_header(std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::array<std::uint8_t, record_header_size> make_record_header(Kind kind, std::string_view key, std::string_view value);
 [[nodiscard]] RecordHeader parse_record_header(std::span<const std::uint8_t> bytes);
-// Validate all available fixed fields and completed lengths of a short header.
+// Validate available fixed fields and reject lengths with no valid completion.
 // Used only to classify a final short suffix; it does not certify missing bytes.
 void validate_partial_record_header(std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::uint32_t crc32(std::span<const std::uint8_t> bytes) noexcept;

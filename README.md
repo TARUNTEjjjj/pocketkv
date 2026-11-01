@@ -61,7 +61,11 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 | `verify` | Scan and validate the complete database without changing it |
 | `repair` | Explicitly discard a structurally incomplete final record |
 
-Exit codes: **0** success, **1** missing key, **2** invalid input or database error.
+Exit codes: **0** success, **1** missing key, **2** invalid input, database error,
+or output-write failure. Key/value arguments are validated before the database is
+opened, so an invalid `put` does not create an empty file. Every output command,
+including help and version, checks its final write. A mutation may already be
+saved when printing its acknowledgement fails; an output error does not roll it back.
 Only `init` and `put` create missing files. Keys are 1–4,096 bytes; values are
 0–1,048,576 bytes. The library supports embedded NUL bytes. Command-line arguments
 cannot carry NUL bytes; `get` and `get-raw` emit stored bytes unchanged.
@@ -96,6 +100,10 @@ target_link_libraries(my_app PRIVATE PocketKV::pocketkv)
 
 Configure that project with `-DCMAKE_PREFIX_PATH=/absolute/path/to/pocketkv/install`.
 See [the example](examples/basic.cpp) and [external consumer test](tests/consumer).
+Custom `CMAKE_INSTALL_BINDIR`, `CMAKE_INSTALL_LIBDIR` and
+`CMAKE_INSTALL_INCLUDEDIR` values are supported. Keep them relative to move the
+installation as a unit. Tests run the installed CLI and a separate library
+consumer after moving the installation, including with custom directories.
 
 ## Integrity and recovery
 
@@ -106,6 +114,9 @@ See [the example](examples/basic.cpp) and [external consumer test](tests/consume
 - An incomplete final record is an error by default. `repair` validates all
   available header fields, then truncates only that incomplete suffix. It reports
   the number of removed bytes. Earlier records remain intact.
+- Partial length fields must still admit a valid completion. If the bytes already
+  imply an impossible key/value length or a value on a deletion record, repair
+  reports corruption and preserves the file.
 - Repair does not reconstruct missing bytes or fix a complete corrupted record.
   A short header has missing checksum bytes that cannot be verified. An otherwise
   valid truncated suffix cannot reveal whether its cause was a crash or corruption.
@@ -149,6 +160,9 @@ ctest --test-dir build-sanitize --output-on-failure
 Tests cover persistence, updates/deletions, binary values, bounds, randomized
 operations against an independent map, locking, partial writes, corruption,
 explicit repair, CLI contracts, and installation into a separate C++ project.
+An isolated test build also injects sync failures, read failures, interruptions
+and short reads to check error handling and recovery without changing the
+production library's system calls.
 GitHub Actions runs GCC and Clang on Linux and Clang on macOS, including an
 AddressSanitizer/UndefinedBehaviorSanitizer build.
 

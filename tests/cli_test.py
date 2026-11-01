@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -32,6 +33,15 @@ def main() -> None:
             raise AssertionError(f"CLI contract failed: {arguments!r}; exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
         return result
 
+    def failed_output(*arguments: str) -> None:
+        # A read-only descriptor forces a write/flush failure on Linux/macOS
+        # without depending on a full filesystem or platform-specific device.
+        with open(os.devnull, "rb") as output:
+            result = subprocess.run([str(binary), *arguments], stdout=output,
+                                    stderr=subprocess.PIPE, timeout=10, check=False)
+        check(result.returncode == 2 and result.stderr == b"error: could not write command output\n",
+              f"output failure must report status 2: {arguments!r}; {result}")
+
     def decode(data: bytes) -> list[tuple[int, bytes, bytes]]:
         """Independent little-endian decoder using Python's standard CRC32."""
         check(len(data) >= 16, "complete file header")
@@ -58,9 +68,24 @@ def main() -> None:
 
     run("--help")
     run("--version")
+    for flag in ["--help", "-h", "--version"]:
+        failed_output(flag)
     run(code=2)
     with tempfile.TemporaryDirectory(prefix="pocketkv-cli-") as directory:
         root = Path(directory)
+        invalid_arguments = [
+            ("put", "", "bad"), ("put", "k" * 4097, "bad"),
+            ("get", ""), ("get-raw", "k" * 4097), ("delete", ""),
+            ("put", "key"), ("nonsense",), ("get", "key", "extra"),
+        ]
+        for index, arguments in enumerate(invalid_arguments):
+            invalid_path = root / f"invalid-{index}.db"
+            result = run(str(invalid_path), *arguments, code=2)
+            check(bool(result.stderr) and not invalid_path.exists(), "invalid command arguments must never create a database")
+        maximum_key = "k" * 4096
+        boundary_database = str(root / "boundary.db")
+        run(boundary_database, "put", maximum_key, "allowed", output=b"Saved.\n")
+        run(boundary_database, "get", maximum_key, output=b"allowed\n")
         database = str(root / "example.db")
         for arguments in [(database, "get", "theme"), (database, "get-raw", "theme"), (database, "repair"), (database, "verify"), (database, "stats"), (database, "keys"), (database, "delete", "theme")]:
             missing = run(*arguments, code=2)
@@ -92,8 +117,8 @@ def main() -> None:
         run(database, "verify", output=b"OK: 4 records, 1 keys.\n")
         before = Path(database).read_bytes()
         check(decode(before) == [(1, b"theme", b"dark"), (1, b"theme", b"light"), (1, b"empty", b""), (2, b"theme", b"")], "independent decoding matches every acknowledged put and tombstone")
-        for arguments in [(database, "put", "key"), (database, "nonsense"), (database, "get", "empty", "extra"), (database, "put", "", "bad")]:
-            result = run(*arguments, code=2)
+        for arguments in invalid_arguments:
+            result = run(database, *arguments, code=2)
             check(bool(result.stderr) and Path(database).read_bytes() == before, "invalid CLI calls preserve database")
 
         # The final record is deliberately incomplete, with all previous records
@@ -139,7 +164,26 @@ def main() -> None:
         Path(raw_database).write_bytes(header + record + payload)
         run(raw_database, "get-raw", "binary", output=value)
         run(raw_database, "get", "binary", output=value + b"\n")
-    print(f"PASS {checks} CLI and independent format checks, including strict reads, explicit recovery and escaped keys")
+
+        # A failed acknowledgement does not undo a completed mutation. Verify
+        # the actual persisted result through a fresh command after each error.
+        output_database = str(root / "output-failure.db")
+        failed_output(output_database, "init")
+        run(output_database, "verify", output=b"OK: 0 records, 0 keys.\n")
+        failed_output(output_database, "put", "persisted", "value")
+        run(output_database, "get", "persisted", output=b"value\n")
+        before = Path(output_database).read_bytes()
+        for arguments in [("get", "persisted"), ("get-raw", "persisted"), ("keys",), ("stats",), ("verify",), ("init",)]:
+            failed_output(output_database, *arguments)
+            check(Path(output_database).read_bytes() == before, "failed read/init output preserves database bytes")
+        failed_output(output_database, "delete", "persisted")
+        run(output_database, "get", "persisted", code=1)
+        before = Path(output_database).read_bytes()
+        Path(output_database).write_bytes(before + b"PKV")
+        failed_output(output_database, "repair")
+        check(Path(output_database).read_bytes() == before, "repair completes even if its acknowledgement cannot be printed")
+        run(output_database, "verify", output=b"OK: 2 records, 0 keys.\n")
+    print(f"PASS {checks} CLI and independent format checks, including argument validation, output failures and recovery")
 
 
 if __name__ == "__main__":

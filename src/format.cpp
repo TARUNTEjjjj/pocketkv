@@ -49,9 +49,30 @@ void write_u32(const std::span<std::uint8_t> bytes, const std::size_t offset,
     throw Error(ErrorCode::corruption, message);
 }
 
+void validate_length_prefix(const std::span<const std::uint8_t> bytes,
+                            const std::size_t offset, const std::uint32_t minimum,
+                            const std::uint32_t maximum, const char* message) {
+    if (bytes.size() <= offset) return;
+    const auto count = std::min<std::size_t>(bytes.size() - offset, 4);
+    std::uint64_t candidate = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+        candidate |= static_cast<std::uint64_t>(bytes[offset + index]) << (index * 8U);
+    }
+    // Known little-endian bytes constrain every completion to this residue.
+    // Find the smallest completion at or above the allowed minimum. A wider
+    // type also handles a complete zero key length without shifting by 32 in
+    // uint32_t. If this candidate exceeds the maximum, every completion fails.
+    if (candidate < minimum) {
+        const auto stride = std::uint64_t{1} << (count * 8U);
+        candidate += ((minimum - candidate + stride - 1) / stride) * stride;
+    }
+    if (candidate > maximum) corrupt(message);
+}
+
 void validate_record_fields(const std::span<const std::uint8_t> bytes) {
     // The caller decides whether this is a full checksummed header or merely
-    // an incomplete final prefix. Never read a field that is not fully present.
+    // an incomplete final prefix. Inspect only present bytes, and reject a
+    // partial length when none of its possible completions would be valid.
     for (std::size_t index = 0; index < std::min(bytes.size(), record_magic.size()); ++index) {
         if (bytes[index] != record_magic[index]) {
             corrupt("invalid record magic");
@@ -66,20 +87,11 @@ void validate_record_fields(const std::span<const std::uint8_t> bytes) {
             corrupt("unsupported record flags or reserved fields");
         }
     }
-    if (bytes.size() >= 12) {
-        const auto key_size = read_u32(bytes, 8);
-        if (key_size == 0 || key_size > Store::max_key_bytes) {
-            corrupt("invalid record key length");
-        }
-    }
-    if (bytes.size() >= 16) {
-        const auto value_size = read_u32(bytes, 12);
-        if (value_size > Store::max_value_bytes) {
-            corrupt("invalid record value length");
-        }
-        if (bytes[4] == static_cast<std::uint8_t>(Kind::erase) && value_size != 0) {
-            corrupt("delete record contains a value");
-        }
+    validate_length_prefix(bytes, 8, 1, Store::max_key_bytes, "invalid record key length");
+    if (bytes.size() > 12) {
+        const bool erase = bytes[4] == static_cast<std::uint8_t>(Kind::erase);
+        validate_length_prefix(bytes, 12, 0, erase ? 0 : Store::max_value_bytes,
+                               erase ? "delete record contains a value" : "invalid record value length");
     }
 }
 

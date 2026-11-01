@@ -43,8 +43,12 @@ a valid externally encoded erase for an absent key is a replay no-op and still
 counts as a log record.
 
 A short final header is eligible for explicit repair only if its available fields
-are consistent: magic prefix, operation, flags/reserved bytes, complete length
-fields, and any present header-checksum bytes. A complete valid header whose
+are consistent: magic prefix, operation, flags/reserved bytes, all present length
+bytes, and any present header-checksum bytes. A partial length must have at least
+one possible completion in its allowed range. For example, key-length bytes
+`00 00` cannot become a valid key length: the completed number is either zero or
+at least 65,536. A single `00` byte can still become 256–4,096 and is accepted.
+Any nonzero value-length byte is invalid for an erase. A complete valid header whose
 payload extends beyond end-of-file is also structurally incomplete. Missing bytes
 cannot be checksum-validated. Repair discards the whole incomplete record; normal
 opens reject it. Fully present malformed records are corruption and are never
