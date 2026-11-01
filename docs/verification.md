@@ -74,7 +74,7 @@ databases, and the exported header path ignored custom install directories.
 These are fixed with regression coverage. The relocated installation is also
 tested with `tools/bin`, `lib64` and `headers` as custom destinations.
 The Linux GCC run also caught libc inline wrappers bypassing the original read
-fault hook. A test-only translation unit now loads system headers before applying
+fault hook. A test-only forced include header now loads system headers before applying
 the substitutions; injection counters verify the fault path is actually exercised.
 
 ## What these checks do not establish

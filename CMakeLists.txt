@@ -49,8 +49,10 @@ if(BUILD_TESTING)
 
     # The shim loads system headers before substituting Store calls, so fortified
     # inline libc wrappers cannot bypass the test hooks. Production is unchanged.
-    add_library(pocketkv_fault_store OBJECT tests/fault_store.cpp)
+    add_library(pocketkv_fault_store OBJECT src/store.cpp)
     target_include_directories(pocketkv_fault_store PRIVATE include)
+    target_compile_options(pocketkv_fault_store PRIVATE
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/tests/fault_syscalls.hpp")
     pocketkv_configure(pocketkv_fault_store)
     add_executable(pocketkv-fault-tests tests/test_faults.cpp src/format.cpp)
     target_include_directories(pocketkv-fault-tests PRIVATE include)
