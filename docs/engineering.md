@@ -97,6 +97,8 @@ that a complete failed write can still appear after reopen. Read failures preser
 the file and failed constructors release their locks. Production library objects
 are compiled without the substitutions. These tests simulate syscall outcomes;
 they do not simulate a physical power failure.
+The test shim includes system headers before defining substitutions, so fortified
+inline libc wrappers cannot replace the injected calls in optimized Linux builds.
 
 ## CLI and installation
 

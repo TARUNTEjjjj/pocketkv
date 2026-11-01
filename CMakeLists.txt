@@ -47,12 +47,10 @@ if(BUILD_TESTING)
     add_test(NAME storage-core COMMAND pocketkv-tests)
     set_tests_properties(storage-core PROPERTIES TIMEOUT 120)
 
-    # Substitute syscalls in a separate Store object only. The installed library
-    # has no fault hooks; the test wrappers can still call the real OS functions.
-    add_library(pocketkv_fault_store OBJECT src/store.cpp)
+    # The shim loads system headers before substituting Store calls, so fortified
+    # inline libc wrappers cannot bypass the test hooks. Production is unchanged.
+    add_library(pocketkv_fault_store OBJECT tests/fault_store.cpp)
     target_include_directories(pocketkv_fault_store PRIVATE include)
-    target_compile_definitions(pocketkv_fault_store PRIVATE
-        fsync=pocketkv_test_fsync pread=pocketkv_test_pread)
     pocketkv_configure(pocketkv_fault_store)
     add_executable(pocketkv-fault-tests tests/test_faults.cpp src/format.cpp)
     target_include_directories(pocketkv-fault-tests PRIVATE include)
