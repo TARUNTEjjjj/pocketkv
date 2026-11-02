@@ -106,6 +106,8 @@ The CLI checks key/value bounds before opening a Store. It also flushes and chec
 stdout for all output commands. A failure writing a mutation's acknowledgement
 returns status 2 after the data operation may already have completed; there is no
 rollback implied by that output error.
+Writing to a closed pipe instead ends the command with SIGPIPE (shells report
+status 141), and a mutation may already be saved in that case too.
 
 The CMake package exports the configured header directory. Installation tests move
 the prefix, run CLI put/get commands, and build a separate library consumer. CI
