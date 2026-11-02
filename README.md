@@ -145,8 +145,12 @@ read allocation, but total index memory grows with the number and length of live
 keys. Every CLI invocation scans the log, so this implementation favors clarity
 and inspectability over large-database throughput.
 
-Next steps: atomic compaction with a documented locking protocol, configurable
-sync policy, and measured startup/read/write benchmarks. These are future work.
+The [reproducible storage experiment](docs/benchmarks.md) measures warm reopen,
+indexed reads and fsync-per-put writes as overwrite history grows. It includes
+the benchmark executable, raw trial data, timing boundaries and limitations.
+
+Next steps: atomic compaction with a documented locking protocol and configurable
+sync policy. These are future work.
 
 ## Testing and design
 
@@ -169,5 +173,7 @@ AddressSanitizer/UndefinedBehaviorSanitizer build.
 - [File format](docs/format.md)
 - [Engineering decisions](docs/engineering.md)
 - [Verification details](docs/verification.md)
+- [Storage benchmark: overwrite history versus live keys](docs/benchmarks.md)
 
 Licensed under [MIT](LICENSE).
+
