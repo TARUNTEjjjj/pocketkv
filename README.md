@@ -66,6 +66,8 @@ or output-write failure. Key/value arguments are validated before the database i
 opened, so an invalid `put` does not create an empty file. Every output command,
 including help and version, checks its final write. A mutation may already be
 saved when printing its acknowledgement fails; an output error does not roll it back.
+Writing to a closed pipe instead ends the command with SIGPIPE (shells report
+status 141), and a mutation may already be saved in that case too.
 Only `init` and `put` create missing files. Keys are 1–4,096 bytes; values are
 0–1,048,576 bytes. The library supports embedded NUL bytes. Command-line arguments
 cannot carry NUL bytes; `get` and `get-raw` emit stored bytes unchanged.
