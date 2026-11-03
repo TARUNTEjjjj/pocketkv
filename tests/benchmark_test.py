@@ -2,6 +2,7 @@
 import csv
 import io
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -17,7 +18,27 @@ with tempfile.TemporaryDirectory(prefix="pocketkv-benchmark-test-") as directory
          "--reads", "7", "--value-bytes", "17", "--directory", directory],
         capture_output=True, text=True, check=True,
     )
+    # A caller-selected destination must work even when the process has an
+    # invalid temporary-directory environment. Querying temp_directory_path()
+    # eagerly in Config used to reject this valid invocation before parsing it.
+    invalid_temp = str(Path(directory) / "missing-temp-directory")
+    environment = dict(os.environ)
+    for variable in ("TMPDIR", "TMP", "TEMP", "TEMPDIR"):
+        environment[variable] = invalid_temp
+    overridden = subprocess.run(
+        [binary, "--keys", "3", "--rounds", "3", "--trials", "2",
+         "--reads", "7", "--value-bytes", "17", "--directory", directory],
+        capture_output=True, text=True, check=True, env=environment,
+    )
+    overridden_rows = list(csv.DictReader(io.StringIO(overridden.stdout)))
     rows = list(csv.DictReader(io.StringIO(result.stdout)))
+    assert len(overridden_rows) == len(rows) == 6
+    # Compare all deterministic fields; measured timings naturally differ.
+    timings = {"put_batch_ms", "reopen_ms", "get_batch_ms"}
+    for expected, actual in zip(rows, overridden_rows):
+        assert {key: value for key, value in expected.items() if key not in timings} == {
+            key: value for key, value in actual.items() if key not in timings
+        }
     assert len(rows) == 6
     for index, row in enumerate(rows):
         trial, round_number = index // 3 + 1, index % 3 + 1

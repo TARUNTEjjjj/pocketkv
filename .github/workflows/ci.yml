@@ -13,6 +13,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Keep the configuration-less install regression covered in CI.
+          - os: ubuntu-latest
+            compiler: g++
+            type: ''
+            sanitizers: OFF
           - os: ubuntu-latest
             compiler: g++
             type: Release
