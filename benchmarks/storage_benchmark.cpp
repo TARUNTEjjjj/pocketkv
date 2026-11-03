@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,7 +24,7 @@ struct Config {
     std::size_t trials = 5;
     std::size_t reads = 4096;
     std::size_t value_bytes = 64;
-    fs::path directory = fs::temp_directory_path();
+    std::optional<fs::path> directory;
 };
 
 std::size_t number(std::string_view text, std::size_t maximum) {
@@ -86,6 +87,8 @@ std::string value_for(std::size_t key, std::size_t round, std::size_t bytes) {
 }
 
 void run(const Config& config) {
+    // Query the system temporary directory only when --directory is absent.
+    const fs::path parent = config.directory ? *config.directory : fs::temp_directory_path();
     std::vector<std::string> keys;
     for (std::size_t i = 0; i < config.keys; ++i) keys.push_back("key" + std::to_string(i));
     std::cout << "trial,live_keys,round,records,file_bytes,live_value_bytes,overwrite_fraction,"
@@ -93,7 +96,7 @@ void run(const Config& config) {
                  "sync_policy,cache_mode\n" << std::fixed << std::setprecision(6);
 
     for (std::size_t trial = 1; trial <= config.trials; ++trial) {
-        TemporaryDirectory temporary(config.directory);
+        TemporaryDirectory temporary(parent);
         const auto path = temporary.file();
         { pocketkv::Store initialize(path); } // Creation and directory sync are not timed.
         for (std::size_t round = 1; round <= config.rounds; ++round) {
