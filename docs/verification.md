@@ -1,6 +1,6 @@
 # Verification
 
-Local verification on 2026-11-01 used Apple Clang 21 on macOS ARM64, CMake 4.4.5,
+Local verification on 2026-11-06 used Apple Clang 21 on macOS ARM64, CMake 4.4.4,
 and Python 3.9.6. Both Release and Debug with AddressSanitizer plus
 UndefinedBehaviorSanitizer passed all five CTest entries with compiler warnings
 treated as errors. A Release build using custom install directories also passed
@@ -8,10 +8,10 @@ all five entries. The same suite runs in [GitHub Actions](https://github.com/TAR
 
 | Check | Coverage | Local result |
 | --- | --- | --- |
-| `storage-core` | Ten groups, 7,320 runtime checks | Pass in both builds |
+| `storage-core` | Eleven groups, 7,329 runtime checks | Pass in both builds |
 | `storage-faults` | Seven groups, 47 injected-I/O checks | Pass in both builds |
 | `cli-help` | CLI can launch and print help | Pass in both builds |
-| `cli-workflows` | 155 command/format checks with Python | Pass in both builds |
+| `cli-workflows` | 215 command/format checks with Python | Pass in both builds |
 | `installed-consumer` | Move the installed package, run CLI put/get, then configure/link/run a separate consumer | Pass in both builds and custom layout |
 
 ## Storage checks
@@ -50,6 +50,9 @@ all five entries. The same suite runs in [GitHub Actions](https://github.com/TAR
   verify retries, byte preservation and release of locks after failed opens.
   Substitutions apply only to a separate test build of the Store; the production
   library calls ordinary system functions.
+- Children with stdin, stdout or stderr closed create and reopen a Store. That
+  descriptor must stay closed, so stray writes to it fail, and the file must hold
+  exactly the acknowledged records.
 
 ## Independent integration checks
 
@@ -58,10 +61,11 @@ headers, payloads, updates, empty values and deletion records independently of t
 C++ codec. It also exercises missing keys/files, invalid arguments, byte-escaped
 keys, exact binary output, recovery, and complete corruption that repair must
 refuse. CLI tests reject invalid keys before creating files and check stdout
-failures for all output-producing commands. Saved mutations are verified after
-an acknowledgement-output failure, including creation, updates, deletion and
-repair. The README's command sequence was run on a fresh temporary database and
-its shown output matched.
+failures for all output-producing commands, with stdout both unwritable and
+closed (`>&-`). Saved mutations are verified after an acknowledgement-output
+failure, including creation, updates, deletion and repair. With stdout or stderr
+closed, the file must hold only acknowledged records. The README's command
+sequence was run on a fresh temporary database and its shown output matched.
 
 The installed-consumer check discovered an exported target-name collision between
 the CLI and static library; the CLI now exports as `PocketKV::cli`, while clients
@@ -76,6 +80,9 @@ tested with `tools/bin`, `lib64` and `headers` as custom destinations.
 The Linux GCC run also caught libc inline wrappers bypassing the original read
 fault hook. A test-only forced include header now loads system headers before applying
 the substitutions; injection counters verify the fault path is actually exercised.
+A later review found that a CLI started with stdout or stderr closed opened the
+database on that descriptor and appended its own output to the log. Descriptors
+now stay above 2, with library and CLI regression coverage.
 
 ## What these checks do not establish
 
