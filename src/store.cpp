@@ -426,6 +426,24 @@ std::vector<std::string> Store::keys() const {
     return result;
 }
 
+std::vector<std::string> Store::keys_page(std::string_view prefix, std::size_t limit,
+                                        std::optional<std::string_view> after) const {
+    if (prefix.size() > max_key_bytes || limit == 0 || limit > max_page_keys) {
+        throw Error(ErrorCode::invalid_argument, "prefix must be at most 4096 bytes and page limit must be 1 to 1000");
+    }
+    if (after) validate_key(*after);
+    impl_->healthy();
+    auto position = after && *after >= prefix
+        ? impl_->index.upper_bound(*after) : impl_->index.lower_bound(prefix);
+    std::vector<std::string> result;
+    result.reserve(limit);
+    for (; position != impl_->index.end() && result.size() < limit; ++position) {
+        if (!position->first.starts_with(prefix)) break;
+        result.push_back(position->first);
+    }
+    return result;
+}
+
 Stats Store::stats() const {
     impl_->healthy();
     return {static_cast<std::uint64_t>(impl_->index.size()), impl_->record_count,

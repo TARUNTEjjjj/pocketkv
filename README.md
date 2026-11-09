@@ -57,6 +57,7 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 | `get-raw KEY` | Write the exact value bytes without an added newline |
 | `delete KEY` | Append a deletion record if the key exists |
 | `keys` | List current keys in bytewise sorted order, escaping nonprintable bytes and backslashes |
+| `keys-prefix PREFIX [LIMIT [AFTER]]` | List a bounded page of matching keys, strictly after an optional raw-key cursor; default 100, maximum 1,000 |
 | `stats` | Show live keys, total log records, file size, and live value bytes |
 | `verify` | Scan and validate the complete database without changing it |
 | `repair` | Explicitly discard a structurally incomplete final record |
@@ -91,6 +92,35 @@ int main() {
 The `Store` owns its file descriptor and exclusive advisory lock through RAII.
 It is neither copyable nor movable. Methods throw `pocketkv::Error`, with a
 structured `ErrorCode`; `get` returns `std::nullopt` for absent keys.
+
+### Bounded key discovery
+
+Use `keys_page` when copying every live key would use too much memory:
+
+```cpp
+std::optional<std::string> cursor;
+for (;;) {
+    auto page = db.keys_page("user/", 100,
+        cursor ? std::optional<std::string_view>(*cursor) : std::nullopt);
+    if (page.empty()) break;
+    for (const auto& key : page) std::cout << key << '\n';
+    cursor = page.back();
+}
+```
+
+An empty prefix matches all keys. Prefixes may contain NUL bytes and are limited
+to 4,096 bytes; a supplied cursor must be a valid nonempty key. Limits are
+1–1,000 inclusive. The ordered index seeks to the prefix or exclusive cursor,
+then copies at most the requested number of matching keys: O(log N + L) index
+steps for N live keys and page limit L, plus string comparison/copying costs.
+This bounds result memory, not the existing in-memory index or startup scan.
+The file format is unchanged, and page reads append no records.
+
+Pages reflect the current index, not a snapshot. Between calls, deleted cursor
+keys remain valid positions; inserted keys before the cursor will not appear.
+Continue using the last returned raw key until a page is empty. The CLI equivalent
+is `pocketkv data.db keys-prefix 'user/' 100 'user/099'`. CLI output escapes keys
+like `keys`; the `AFTER` argument is the original key, not its escaped display.
 
 Install with `cmake --install build --prefix "$PWD/install"`. A consuming CMake
 project uses:

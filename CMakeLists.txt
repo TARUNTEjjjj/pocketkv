@@ -54,6 +54,12 @@ if(BUILD_TESTING)
     add_test(NAME storage-core COMMAND pocketkv-tests)
     set_tests_properties(storage-core PROPERTIES TIMEOUT 120)
 
+    add_executable(pocketkv-page-tests tests/test_key_pages.cpp)
+    target_link_libraries(pocketkv-page-tests PRIVATE PocketKV::pocketkv)
+    pocketkv_configure(pocketkv-page-tests)
+    add_test(NAME key-pages COMMAND pocketkv-page-tests)
+    set_tests_properties(key-pages PROPERTIES TIMEOUT 120)
+
     # The shim loads system headers before substituting Store calls, so fortified
     # inline libc wrappers cannot bypass the test hooks. Production is unchanged.
     add_library(pocketkv_fault_store OBJECT src/store.cpp)

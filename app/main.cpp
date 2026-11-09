@@ -1,6 +1,7 @@
 #include "pocketkv/store.hpp"
 
 #include <exception>
+#include <charconv>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -16,6 +17,8 @@ void usage(std::ostream& out) {
         << "  get-raw KEY        Write the exact stored bytes to standard output\n"
         << "  delete KEY         Delete a key\n"
         << "  keys               List escaped keys in sorted order\n"
+        << "  keys-prefix PREFIX [LIMIT [AFTER]]\n"
+        << "                     Page matching keys (default 100, maximum 1000)\n"
         << "  stats              Show record, key, byte and live-value counts\n"
         << "  verify             Validate the entire database without repairing it\n"
         << "  repair             Truncate only a structurally incomplete final record\n\n"
@@ -73,12 +76,29 @@ int main(int argc, char* argv[]) {
     const std::string_view command(argv[2]);
     const bool no_arguments = command == "init" || command == "keys" || command == "stats" || command == "verify" || command == "repair";
     const bool one_argument = command == "get" || command == "get-raw" || command == "delete";
-    if ((!no_arguments && !one_argument && command != "put") ||
+    const bool page = command == "keys-prefix";
+    if ((!no_arguments && !one_argument && command != "put" && !page) ||
+        (page && (argc < 4 || argc > 6)) ||
         (no_arguments && argc != 3) || (one_argument && argc != 4) || (command == "put" && argc != 5)) {
         usage(std::cerr);
         return 2;
     }
     try {
+        std::size_t page_limit = 100;
+        if (page) {
+            if (argc >= 5) {
+                const std::string_view argument(argv[4]);
+                const auto parsed = std::from_chars(argument.data(), argument.data() + argument.size(), page_limit);
+                if (parsed.ec != std::errc{} || parsed.ptr != argument.data() + argument.size()) {
+                    throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument, "page limit must be an integer from 1 to 1000");
+                }
+            }
+            if (std::string_view(argv[3]).size() > pocketkv::Store::max_key_bytes ||
+                page_limit == 0 || page_limit > pocketkv::Store::max_page_keys ||
+                (argc == 6 && (std::string_view(argv[5]).empty() || std::string_view(argv[5]).size() > pocketkv::Store::max_key_bytes))) {
+                throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument, "invalid prefix, page limit or cursor");
+            }
+        }
         // Validate command arguments before opening a Store: a rejected put
         // must not create a database as a side effect of constructor success.
         if (one_argument || command == "put") {
@@ -111,6 +131,9 @@ int main(int argc, char* argv[]) {
             std::cout << "Deleted.\n";
         } else if (command == "keys") {
             for (const auto& key : database.keys()) std::cout << escaped(key) << '\n';
+        } else if (page) {
+            const auto after = argc == 6 ? std::optional<std::string_view>(argv[5]) : std::nullopt;
+            for (const auto& key : database.keys_page(argv[3], page_limit, after)) std::cout << escaped(key) << '\n';
         } else if (command == "repair") {
             std::cout << "Repaired " << database.repaired_bytes() << " bytes.\n";
         } else {

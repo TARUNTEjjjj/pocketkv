@@ -42,6 +42,7 @@ class Store {
 public:
     static constexpr std::size_t max_key_bytes = 4096;
     static constexpr std::size_t max_value_bytes = 1024 * 1024;
+    static constexpr std::size_t max_page_keys = 1000;
 
     explicit Store(const std::filesystem::path& path, Options options = {});
     ~Store();
@@ -55,6 +56,12 @@ public:
     // No record is written if the key is absent.
     bool erase(std::string_view key);
     [[nodiscard]] std::vector<std::string> keys() const;
+    // Bytewise ordered prefix matches, strictly after the optional raw-key
+    // cursor. Empty prefix matches all keys; limit must be 1..max_page_keys.
+    // Pages are not snapshots: mutations between calls affect later results.
+    [[nodiscard]] std::vector<std::string> keys_page(
+        std::string_view prefix, std::size_t limit = 100,
+        std::optional<std::string_view> after = std::nullopt) const;
     [[nodiscard]] Stats stats() const;
     [[nodiscard]] std::uint64_t repaired_bytes() const noexcept;
 

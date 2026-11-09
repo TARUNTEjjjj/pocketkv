@@ -83,6 +83,23 @@ def main() -> None:
             result = run(str(invalid_path), *arguments, code=2)
             check(bool(result.stderr) and not invalid_path.exists(), "invalid command arguments must never create a database")
         maximum_key = "k" * 4096
+        paged = str(root / "pages.db")
+        run(paged, "keys-prefix", "", code=2)
+        check(not Path(paged).exists(), "page reads must not create a missing database")
+        for key in ["user/1", "user/2", "user/3", "other", "user/line\nbreak"]:
+            run(paged, "put", key, "value")
+        unchanged = Path(paged).read_bytes()
+        run(paged, "keys-prefix", "user/", "2", output=b"user/1\nuser/2\n")
+        run(paged, "keys-prefix", "user/", "2", "user/2", output=b"user/3\nuser/line\\x0abreak\n")
+        run(paged, "keys-prefix", "", "1", output=b"other\n")
+        run(paged, "keys-prefix", "missing", output=b"")
+        run(paged, "keys-prefix", "user/", output=b"user/1\nuser/2\nuser/3\nuser/line\\x0abreak\n")
+        for limit in ["0", "1001", "-1", "+1", "1x", "", " 2", "184467440737095516160"]:
+            run(paged, "keys-prefix", "", limit, code=2)
+        for arguments in [("keys-prefix",), ("keys-prefix", "x" * 4097), ("keys-prefix", "", "1", ""), ("keys-prefix", "", "1", "x" * 4097), ("keys-prefix", "", "1", "a", "extra")]:
+            run(paged, *arguments, code=2)
+        failed_output(paged, "keys-prefix", "user/")
+        check(Path(paged).read_bytes() == unchanged, "page queries and rejected inputs preserve every database byte")
         boundary_database = str(root / "boundary.db")
         run(boundary_database, "put", maximum_key, "allowed", output=b"Saved.\n")
         run(boundary_database, "get", maximum_key, output=b"allowed\n")

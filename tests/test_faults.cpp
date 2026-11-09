@@ -130,6 +130,7 @@ std::string file_contents(const fs::path& path) {
 void require_poisoned(Store& store) {
     expect_io([&] { (void)store.get("stable"); });
     expect_io([&] { (void)store.keys(); });
+    expect_io([&] { (void)store.keys_page(""); });
     expect_io([&] { (void)store.stats(); });
     expect_io([&] { store.put("later", "must be rejected"); });
     expect_io([&] { (void)store.erase("stable"); });
