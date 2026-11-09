@@ -1,5 +1,28 @@
 # Verification
 
+## Reliability and key discovery · 2026-11-09
+
+Release and Debug ASan/UBSan builds, with warnings treated as errors and
+benchmarks enabled, passed all seven CTest entries. The new `key-pages` suite
+passed 357 checks against a separately filtered key ledger: binary/NUL prefixes,
+exclusive cursors before/inside/after a prefix, absent and deleted cursor keys,
+page chaining, boundary limits, invalid inputs, reopening and mutations between
+pages. Reads leave record and byte counts unchanged. CLI integration passed
+182 checks, including bounded output, raw cursor semantics, malformed limits,
+missing databases, escaping and failed stdout writes.
+
+The new fork regression failed before the ownership guard because an inherited
+child handle accepted a write. With the guard, the core suite passes 11 groups
+and 7,326 parent-process checks; child assertions additionally verify rejection
+of reads, writes, missing-key operations, enumeration and statistics, retention
+of the parent's lock, and successful use of a fresh child-owned database. Parent
+data and subsequent writes survive reopening. The fault suite passes 49 checks,
+including rejection of page reads after an uncertain write. This is targeted
+regression evidence, not a physical power-loss or concurrency guarantee.
+
+The sections below retain the earlier verification record and its historical
+counts. GitHub Actions exercises the current suite on Linux GCC/Clang and macOS.
+
 Local verification on 2026-11-01 used Apple Clang 21 on macOS ARM64, CMake 4.4.5,
 and Python 3.9.6. Both Release and Debug with AddressSanitizer plus
 UndefinedBehaviorSanitizer passed all five CTest entries with compiler warnings

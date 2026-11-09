@@ -38,6 +38,7 @@ struct Stats {
 // Exclusive advisory lock for this object's lifetime. The object is not
 // thread-safe: callers must serialize operations. Each mutation fsyncs its
 // append before updating the in-memory index or returning success.
+// Data operations reject inherited instances in forked child processes.
 class Store {
 public:
     static constexpr std::size_t max_key_bytes = 4096;

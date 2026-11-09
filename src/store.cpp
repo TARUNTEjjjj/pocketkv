@@ -239,6 +239,10 @@ struct Store::Impl {
     }
 
     void healthy() const {
+        if (::getpid() != owner_pid) {
+            throw Error(ErrorCode::invalid_argument,
+                        "Store cannot be used after fork; close the inherited instance and open a new Store");
+        }
         if (poisoned) {
             throw Error(ErrorCode::io, "database state is uncertain after a failed write; close and reopen it");
         }
@@ -343,6 +347,8 @@ struct Store::Impl {
         return entry;
     }
 
+    // flock is shared across fork, while each process has its own index copy.
+    const pid_t owner_pid = ::getpid();
     FileDescriptor fd;
     std::map<std::string, Entry, std::less<>> index;
     std::uint64_t record_count = 0;

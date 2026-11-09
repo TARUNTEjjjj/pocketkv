@@ -14,6 +14,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <random>
 #include <span>
 #include <string>
@@ -412,6 +413,48 @@ void locking_and_process_exit() {
     require(after_exit.get("persisted") == "without-destructor", "acknowledged put survives process exit without destructor");
 }
 
+void inherited_store_is_rejected() {
+    Temp temp;
+    auto db = std::make_unique<Store>(temp.path());
+    db->put("held", "parent value");
+    const auto original = read(temp.path());
+    std::cout.flush();
+    const auto child = ::fork();
+    if (child == 0) {
+        try {
+            // A fork inherits the same locked open-file description, but an
+            // independent index. Reject even an otherwise valid child append.
+            expect_error(ErrorCode::invalid_argument, [&] { db->put("child", "rejected"); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->erase("held"); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->erase("missing"); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->get("held"); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->get("missing"); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->keys(); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->keys_page(""); });
+            expect_error(ErrorCode::invalid_argument, [&] { (void)db->stats(); });
+            require(db->repaired_bytes() == 0, "Historical repair metadata remains readable");
+            db.reset(); // Closing the child's descriptor must preserve the parent's lock.
+            expect_error(ErrorCode::locked, [&] { Store competing(temp.path()); });
+            Store owned(temp.path("child.db"));
+            owned.put("fresh", "child-owned");
+            require(owned.get("fresh") == "child-owned", "Fresh child Store remains usable");
+            ::_exit(0);
+        } catch (const std::exception& error) {
+            std::cerr << "Inherited Store check failed: " << error.what() << '\n';
+            ::_exit(24);
+        }
+    }
+    child_success(child);
+    require(read(temp.path()) == original, "Rejected inherited operations preserve database bytes");
+    require(db->get("held") == "parent value" && !db->get("child"), "Parent index remains unchanged");
+    db->put("after", "parent continues");
+    require(db->stats().record_count == 2, "Parent remains writable after child closes its copy");
+    db.reset();
+    Store reopened(temp.path());
+    require(reopened.get("held") == "parent value" && reopened.get("after") == "parent continues",
+            "Parent writes survive reopening after fork rejection");
+}
+
 struct Pipe {
     std::array<int, 2> descriptors{-1, -1};
     Pipe() {
@@ -567,6 +610,7 @@ int main() {
         {"partial lengths must admit a valid completion", partial_length_validation},
         {"corruption is rejected without mutation", corruption_is_not_repair},
         {"exclusive locking and abrupt process exit", locking_and_process_exit},
+        {"inherited Store operations reject forked children", inherited_store_is_rejected},
         {"simultaneous first creation is atomic", simultaneous_first_creation},
         {"short append poisons writer until reopen", short_write_poisoning},
     };

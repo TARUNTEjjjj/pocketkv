@@ -167,8 +167,15 @@ what survives a power failure; PocketKV does not promise production-grade durabi
 PocketKV permits **one open Store per database**, including read commands. Every
 open requires read/write access, and callers must serialize use of a Store across
 threads. `flock` is advisory: other programs can ignore it. Renaming, unlinking, or
-replacing an open database, changing it externally, and using an inherited Store
-after `fork` are unsupported. Open fresh Store instances in child processes.
+replacing an open database and changing it externally are unsupported.
+An inherited Store rejects data access and mutation in a forked child with
+`ErrorCode::invalid_argument`, before touching the file or copied index. Its
+`repaired_bytes()` accessor still reports historical constructor metadata.
+Close the child's inherited instance and open a fresh Store; a fresh open still
+reports lock contention while the parent owns that database. Closing the child's
+copy does not release the parent's lock. This guard does not make Store or its
+destructor async-signal-safe after a multithreaded process forks; such children
+must follow the platform's fork/exec restrictions.
 
 The log grows with every update; deleted and overwritten payloads remain on disk.
 There is no compaction, transaction API, SQL, concurrent reader mode, encryption,
