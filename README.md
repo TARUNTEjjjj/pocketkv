@@ -53,6 +53,7 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 | --- | --- |
 | `init` | Create an empty database or validate an existing database |
 | `put KEY VALUE` | Insert or replace a value; create the database if absent |
+| `put-stdin KEY` | Read exact value bytes from standard input until EOF, then insert or replace; create the database if absent |
 | `get KEY` | Print a value and a trailing newline |
 | `get-raw KEY` | Write the exact value bytes without an added newline |
 | `delete KEY` | Append a deletion record if the key exists |
@@ -63,15 +64,36 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 | `repair` | Explicitly discard a structurally incomplete final record |
 
 Exit codes: **0** success, **1** missing key, **2** invalid input, database error,
-or output-write failure. Key/value arguments are validated before the database is
+or input/output failure. Key/value arguments are validated before the database is
 opened, so an invalid `put` does not create an empty file. Every output command,
 including help and version, checks its final write. A mutation may already be
 saved when printing its acknowledgement fails; an output error does not roll it back.
 Writing to a closed pipe instead ends the command with SIGPIPE (shells report
 status 141), and a mutation may already be saved in that case too.
-Only `init` and `put` create missing files. Keys are 1–4,096 bytes; values are
+Only `init`, `put`, and `put-stdin` create missing files. Keys are 1–4,096 bytes; values are
 0–1,048,576 bytes. The library supports embedded NUL bytes. Command-line arguments
-cannot carry NUL bytes; `get` and `get-raw` emit stored bytes unchanged.
+cannot carry NUL bytes and are subject to the operating system's argument-size
+limits. Use `put-stdin` for binary data or large values; `get` and `get-raw` emit
+stored bytes unchanged.
+
+### Files and pipelines
+
+```sh
+./build/pocketkv assets.db put-stdin avatar < avatar.png
+./build/pocketkv assets.db get-raw avatar > restored.png
+cmp avatar.png restored.png
+
+printf 'first line\nsecond line\n' | ./build/pocketkv notes.db put-stdin draft
+./build/pocketkv notes.db get-raw draft
+```
+
+`put-stdin` preserves every byte, including NULs and trailing newlines. Empty input
+stores an empty value. It validates the key before reading, then reads at most
+1,048,577 bytes to detect an oversized value. Input errors and oversized values
+return exit code 2 without creating or changing the database. The database is
+opened only after valid input reaches EOF, so waiting for a producer does not
+hold its lock. EOF ends the value; the CLI cannot detect whether an upstream
+producer exited successfully before closing its pipe.
 
 ## C++ API
 
@@ -203,6 +225,9 @@ ctest --test-dir build-sanitize --output-on-failure
 Tests cover persistence, updates/deletions, binary values, bounds, randomized
 operations against an independent map, locking, partial writes, corruption,
 explicit repair, CLI contracts, and installation into a separate C++ project.
+The `real-world-scenarios` suite adds file and pipe imports, a session-cache
+lifecycle, interrupted input, and SIGKILL/restart checks against an independent
+record decoder and acknowledgement ledger.
 An isolated test build also injects sync failures, read failures, interruptions
 and short reads to check error handling and recovery without changing the
 production library's system calls.

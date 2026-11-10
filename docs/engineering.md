@@ -45,6 +45,12 @@ the file-type check.
 For newly created temporary files, portable `mkstemp` is followed immediately by
 `fcntl(FD_CLOEXEC)`. Do not construct a Store concurrently with another thread's
 fork/exec during that short setup window.
+Descriptors never stay at 0–2. If a process starts with stdin, stdout or stderr
+closed (a shell's `>&-`), `open` and `mkstemp` return that free slot, and the
+program's own console output would be appended to the log. The Store moves such a
+descriptor above 2 with `F_DUPFD_CLOEXEC` and closes the original, so those writes
+keep failing and the CLI reports a closed stdout as an output error. Do not write
+to a closed standard stream from another thread while a Store opens.
 
 ## Locking and concurrency
 

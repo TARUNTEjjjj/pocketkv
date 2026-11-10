@@ -42,6 +42,16 @@ def main() -> None:
         check(result.returncode == 2 and result.stderr == b"error: could not write command output\n",
               f"output failure must report status 2: {arguments!r}; {result}")
 
+    def closed_stream(descriptor: int, *arguments: str, code: int = 2) -> None:
+        # `>&-` or `2>&-` starts the CLI with that standard descriptor closed.
+        # The database must never fill the free slot, or the CLI's own output
+        # would be appended to the log; a closed stdout is an output failure.
+        result = subprocess.run([str(binary), *arguments], capture_output=True, timeout=10,
+                                check=False, preexec_fn=lambda: os.close(descriptor))
+        error = b"error: could not write command output\n" if descriptor == 1 else b""
+        check(result.returncode == code and result.stdout == b"" and result.stderr == error,
+              f"closed descriptor {descriptor} contract failed: {arguments!r}; {result}")
+
     def decode(data: bytes) -> list[tuple[int, bytes, bytes]]:
         """Independent little-endian decoder using Python's standard CRC32."""
         check(len(data) >= 16, "complete file header")
@@ -200,6 +210,29 @@ def main() -> None:
         failed_output(output_database, "repair")
         check(Path(output_database).read_bytes() == before, "repair completes even if its acknowledgement cannot be printed")
         run(output_database, "verify", output=b"OK: 2 records, 0 keys.\n")
+
+        # The same contract with stdout or stderr closed rather than unwritable:
+        # only acknowledged records may reach the file, through every command.
+        closed_database = str(root / "closed-descriptor.db")
+        closed_stream(1, closed_database, "init")
+        check(decode(Path(closed_database).read_bytes()) == [], "init with closed stdout writes only a valid header")
+        closed_stream(1, closed_database, "put", "kept", "value")
+        before = Path(closed_database).read_bytes()
+        check(decode(before) == [(1, b"kept", b"value")], "put with closed stdout appends only its record")
+        for arguments in [("get", "kept"), ("get-raw", "kept"), ("keys",), ("stats",), ("verify",), ("init",)]:
+            closed_stream(1, closed_database, *arguments)
+            check(Path(closed_database).read_bytes() == before, "reads with closed stdout preserve database bytes")
+        for arguments in [("get", "absent"), ("get-raw", "absent"), ("delete", "absent")]:
+            closed_stream(2, closed_database, *arguments, code=1)
+            check(Path(closed_database).read_bytes() == before, "missing keys with closed stderr preserve database bytes")
+        closed_stream(1, closed_database, "delete", "kept")
+        check(decode(Path(closed_database).read_bytes()) == [(1, b"kept", b"value"), (2, b"kept", b"")],
+              "delete with closed stdout appends only its tombstone")
+        before = Path(closed_database).read_bytes()
+        Path(closed_database).write_bytes(before + b"PKV")
+        closed_stream(1, closed_database, "repair")
+        check(Path(closed_database).read_bytes() == before, "repair with closed stdout leaves only the valid prefix")
+        run(closed_database, "verify", output=b"OK: 2 records, 0 keys.\n")
     print(f"PASS {checks} CLI and independent format checks, including argument validation, output failures and recovery")
 
 

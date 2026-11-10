@@ -79,6 +79,13 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME cli-workflows COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py $<TARGET_FILE:pocketkv>)
         set_tests_properties(cli-workflows PROPERTIES TIMEOUT 120)
+        add_executable(pocketkv-scenario-driver tests/scenario_driver.cpp)
+        target_link_libraries(pocketkv-scenario-driver PRIVATE PocketKV::pocketkv)
+        pocketkv_configure(pocketkv-scenario-driver)
+        add_test(NAME real-world-scenarios COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios_test.py
+            $<TARGET_FILE:pocketkv> $<TARGET_FILE:pocketkv-scenario-driver>)
+        set_tests_properties(real-world-scenarios PROPERTIES TIMEOUT 120)
         if(POCKETKV_BUILD_BENCHMARKS)
             add_test(NAME benchmark-accounting COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py $<TARGET_FILE:pocketkv-benchmark>)

@@ -1,10 +1,15 @@
 #include "pocketkv/store.hpp"
 
-#include <exception>
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <charconv>
+#include <cstring>
+#include <exception>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 
 namespace {
 
@@ -13,6 +18,7 @@ void usage(std::ostream& out) {
         << "Usage: pocketkv DATABASE COMMAND [ARGUMENTS]\n\n"
         << "  init               Create a database, or validate an existing one\n"
         << "  put KEY VALUE      Save or replace a value\n"
+        << "  put-stdin KEY      Save exact standard-input bytes (up to 1048576)\n"
         << "  get KEY            Print the value followed by a newline\n"
         << "  get-raw KEY        Write the exact stored bytes to standard output\n"
         << "  delete KEY         Delete a key\n"
@@ -23,7 +29,30 @@ void usage(std::ostream& out) {
         << "  verify             Validate the entire database without repairing it\n"
         << "  repair             Truncate only a structurally incomplete final record\n\n"
         << "Global options: --help, --version\n"
-        << "Exit codes: 0 success; 1 missing key; 2 invalid input, database or output error.\n";
+        << "Exit codes: 0 success; 1 missing key; 2 invalid input, database or I/O error.\n";
+}
+
+std::string read_standard_input() {
+    std::string value;
+    std::array<char, 16384> buffer{};
+    for (;;) {
+        // Read just one byte beyond the limit, so oversized input is rejected
+        // without waiting for EOF or buffering an unbounded producer.
+        const auto wanted = std::min(buffer.size(), pocketkv::Store::max_value_bytes - value.size() + 1);
+        const auto count = ::read(STDIN_FILENO, buffer.data(), wanted);
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            throw pocketkv::Error(pocketkv::ErrorCode::io,
+                                  std::string("could not read standard input: ") + std::strerror(errno));
+        }
+        if (count == 0) return value;
+        const auto received = static_cast<std::size_t>(count);
+        if (received > pocketkv::Store::max_value_bytes - value.size()) {
+            throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument,
+                                  "value exceeds the 1048576-byte limit");
+        }
+        value.append(buffer.data(), received);
+    }
 }
 
 int finish_output() {
@@ -75,7 +104,8 @@ int main(int argc, char* argv[]) {
     }
     const std::string_view command(argv[2]);
     const bool no_arguments = command == "init" || command == "keys" || command == "stats" || command == "verify" || command == "repair";
-    const bool one_argument = command == "get" || command == "get-raw" || command == "delete";
+    const bool stdin_value = command == "put-stdin";
+    const bool one_argument = command == "get" || command == "get-raw" || command == "delete" || stdin_value;
     const bool page = command == "keys-prefix";
     if ((!no_arguments && !one_argument && command != "put" && !page) ||
         (page && (argc < 4 || argc > 6)) ||
@@ -112,14 +142,17 @@ int main(int argc, char* argv[]) {
             throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument,
                                   "value exceeds the 1048576-byte limit");
         }
+        // Consume and validate the whole value before creating or locking the
+        // database. Input failures cannot leave a partial mutation.
+        const auto input = stdin_value ? read_standard_input() : std::string{};
         pocketkv::Options options;
-        options.create_if_missing = command == "init" || command == "put";
+        options.create_if_missing = command == "init" || command == "put" || stdin_value;
         options.repair_incomplete_tail = command == "repair";
         pocketkv::Store database(argv[1], options);
         if (command == "init") {
             std::cout << "Ready.\n";
-        } else if (command == "put") {
-            database.put(argv[3], argv[4]);
+        } else if (command == "put" || stdin_value) {
+            database.put(argv[3], stdin_value ? std::string_view(input) : std::string_view(argv[4]));
             std::cout << "Saved.\n";
         } else if (command == "get" || command == "get-raw") {
             const auto value = database.get(argv[3]);
