@@ -598,6 +598,78 @@ void short_write_poisoning() {
     require(repaired.get("after") == "works", "repaired file accepts writes");
 }
 
+// A process may start with stdin, stdout or stderr closed, as a shell's `>&-`
+// does. open() and mkstemp() return the lowest free descriptor, so a Store must
+// never keep its database there: the program's own output would join the log.
+void closed_standard_descriptors() {
+    for (const int closed : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) {
+        Temp temp;
+        const auto child = ::fork();
+        if (child == 0) {
+            const auto stray_write_fails = [closed] {
+                constexpr std::string_view stray = "stray console output\n";
+                return ::write(closed, stray.data(), stray.size()) < 0 && errno == EBADF;
+            };
+            try {
+                if (::close(closed) != 0) ::_exit(60);
+                {
+                    Store created(temp.path()); // A new database comes from mkstemp.
+                    if (!stray_write_fails()) ::_exit(61);
+                    created.put("first", "one");
+                }
+                Store reopened(temp.path(), {.create_if_missing=false}); // An existing one from open.
+                if (!stray_write_fails()) ::_exit(62);
+                reopened.put("second", "two");
+                ::_exit(0);
+            } catch (...) { ::_exit(63); }
+        }
+        require(child > 0, "fork succeeded");
+        int status = 0;
+        while (::waitpid(child, &status, 0) < 0) {
+            if (errno != EINTR) throw std::runtime_error("waitpid failed");
+        }
+        const auto descriptor = "descriptor " + std::to_string(closed);
+        require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                descriptor + " stays closed while a Store is open, so stray writes fail (child exit " +
+                std::to_string(WIFEXITED(status) ? WEXITSTATUS(status) : -1) + ")");
+        auto expected = external_header();
+        append(expected, external_record(1, "first", "one"));
+        append(expected, external_record(1, "second", "two"));
+        require(read(temp.path()) == expected, descriptor + " closed: the database holds only acknowledged records");
+    }
+
+    // With no descriptor slots above stderr, relocation must fail cleanly for
+    // both mkstemp (creation) and open (existing data). Only the child is limited.
+    for (const bool existing : {false, true}) {
+        Temp temp;
+        const auto path = temp.path();
+        auto expected = external_header();
+        append(expected, external_record(1, "kept", "value"));
+        if (existing) write(path, expected);
+        const auto child = ::fork();
+        if (child == 0) {
+            struct rlimit limit {};
+            if (::getrlimit(RLIMIT_NOFILE, &limit) != 0) ::_exit(70);
+            limit.rlim_cur = 3;
+            if (::close(STDERR_FILENO) != 0 || ::setrlimit(RLIMIT_NOFILE, &limit) != 0) ::_exit(71);
+            try { Store rejected(path); ::_exit(72); }
+            catch (const Error& error) {
+                if (error.code() != ErrorCode::io) ::_exit(73);
+                if (::write(STDERR_FILENO, "x", 1) >= 0 || errno != EBADF) ::_exit(74);
+                ::_exit(0);
+            } catch (...) { ::_exit(75); }
+        }
+        child_success(child);
+        if (existing) {
+            require(read(path) == expected, "failed descriptor relocation preserves existing data");
+            Store reopened(path, {.create_if_missing=false});
+            require(reopened.get("kept") == "value", "failed relocation leaves no lock behind");
+        } else {
+            require(fs::is_empty(temp.directory), "failed relocation removes its private temporary file");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -613,6 +685,7 @@ int main() {
         {"inherited Store operations reject forked children", inherited_store_is_rejected},
         {"simultaneous first creation is atomic", simultaneous_first_creation},
         {"short append poisons writer until reopen", short_write_poisoning},
+        {"closed standard descriptors never hold the database", closed_standard_descriptors},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

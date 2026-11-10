@@ -41,12 +41,29 @@ private:
     throw Error(ErrorCode::io, std::string(operation) + ": " + std::strerror(code));
 }
 
+// A process may start with stdin, stdout or stderr closed (a shell's `>&-`).
+// open() and mkstemp() return the lowest free descriptor, so a database could
+// take one of those slots and receive the program's own console output. Move
+// such a descriptor above 2 and close the original, leaving the slot closed so
+// those writes keep failing. Returns -1 with errno set if the move fails.
+int above_standard_streams(int fd) {
+    if (fd < 0 || fd > STDERR_FILENO) return fd;
+    int moved;
+    do {
+        moved = ::fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+    } while (moved < 0 && errno == EINTR);
+    const int failure = errno;
+    ::close(fd);
+    errno = failure;
+    return moved;
+}
+
 int open_file(const std::filesystem::path& path, int flags, mode_t mode = 0600) {
     int result;
     do {
         result = ::open(path.c_str(), flags, mode);
     } while (result < 0 && errno == EINTR);
-    return result;
+    return above_standard_streams(result);
 }
 
 class TemporaryFile {
@@ -55,8 +72,15 @@ public:
         : name_((directory / ".pocketkv-XXXXXX").string()) {
         // mkstemp creates a private 0600 file with O_EXCL. All potentially
         // allocating work precedes creation so no exception can lose its name.
-        const int raw = ::mkstemp(name_.data());
-        if (raw < 0) io_error("cannot create private database file");
+        const int created = ::mkstemp(name_.data());
+        if (created < 0) io_error("cannot create private database file");
+        const int raw = above_standard_streams(created);
+        if (raw < 0) {
+            // The destructor will not run for a throwing constructor.
+            const int failure = errno;
+            remove_name();
+            io_error("cannot create private database file", failure);
+        }
         fd_ = FileDescriptor(raw);
         owns_name_ = true;
     }
