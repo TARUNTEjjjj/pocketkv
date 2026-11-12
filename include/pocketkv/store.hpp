@@ -64,6 +64,10 @@ public:
         std::string_view prefix, std::size_t limit = 100,
         std::optional<std::string_view> after = std::nullopt) const;
     [[nodiscard]] Stats stats() const;
+    // Write a compact, independently usable snapshot to a new path. Includes
+    // only live keys, validates each value, and never replaces a destination.
+    // Publication is atomic; success includes file and directory fsync.
+    void snapshot(const std::filesystem::path& destination) const;
     [[nodiscard]] std::uint64_t repaired_bytes() const noexcept;
 
 private:

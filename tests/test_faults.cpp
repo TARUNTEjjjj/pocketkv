@@ -276,6 +276,28 @@ void read_failure_is_nonmutating() {
     require(reopened.get("stable") == "kept", "Failed replay releases its descriptor and lock");
 }
 
+void snapshot_failures_preserve_source() {
+    TemporaryDirectory temp;
+    Store source(temp.database());
+    source.put("stable", "original");
+    const auto original = file_contents(temp.database());
+    const auto destination = temp.directory / "snapshot.db";
+    sync_fault = SyncFault::io_once;
+    expect_io([&] { source.snapshot(destination); });
+    require(!fs::exists(destination), "Failed snapshot sync never publishes its destination");
+    read_fault = ReadFault::io_once;
+    expect_io([&] { source.snapshot(destination); });
+    require(!fs::exists(destination), "Failed source read never publishes its destination");
+    require(file_contents(temp.database()) == original, "Snapshot failures preserve source bytes");
+    require(source.get("stable") == "original", "Snapshot failure never poisons the source");
+    sync_fault = SyncFault::directory_io_once;
+    expect_io([&] { source.snapshot(destination); });
+    { Store copy(destination); require(copy.get("stable") == "original", "Failed directory sync leaves complete published snapshot"); }
+    for (const auto& entry : fs::directory_iterator(temp.directory)) {
+        require(entry.path() == temp.database() || entry.path() == destination, "Snapshot failure leaves no temporary file");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -287,6 +309,7 @@ int main() {
         {"directory sync failure leaves a valid published file", directory_sync_failure},
         {"interrupted synchronization and short reads", interrupted_and_short_io},
         {"read failures preserve bytes and release failed opens", read_failure_is_nonmutating},
+        {"snapshot failures preserve source and clean private files", snapshot_failures_preserve_source},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : groups) {
