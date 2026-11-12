@@ -60,6 +60,7 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 | `keys` | List current keys in bytewise sorted order, escaping nonprintable bytes and backslashes |
 | `keys-prefix PREFIX [LIMIT [AFTER]]` | List a bounded page of matching keys, strictly after an optional raw-key cursor; default 100, maximum 1,000 |
 | `stats` | Show live keys, total log records, file size, and live value bytes |
+| `snapshot NEW_PATH` | Write a compact, independently usable database containing current live keys; refuse an existing destination |
 | `verify` | Scan and validate the complete database without changing it |
 | `repair` | Explicitly discard a structurally incomplete final record |
 
@@ -94,6 +95,28 @@ return exit code 2 without creating or changing the database. The database is
 opened only after valid input reaches EOF, so waiting for a producer does not
 hold its lock. EOF ends the value; the CLI cannot detect whether an upstream
 producer exited successfully before closing its pipe.
+
+### Compact snapshots
+
+```sh
+./build/pocketkv notes.db snapshot notes-backup.db
+./build/pocketkv notes-backup.db verify
+```
+
+The library exposes `db.snapshot("notes-backup.db")`. A snapshot preserves all
+current key/value bytes, including binary data and empty values, while omitting
+deleted keys and superseded records. It validates each live record, uses at most
+one value of additional payload memory, and keeps the source lock throughout.
+The source is unchanged and subsequent source writes do not affect the copy.
+
+The destination must not exist, including as a symlink. A private file in its
+directory is synchronized before atomic publication, followed by directory
+synchronization. Failures before publication leave no destination; a failure
+after publication may leave a complete copy even though the command reports an
+error. Inspect that copy before retrying. The destination filesystem needs the
+same hard-link and synchronization support as ordinary database creation.
+This is a logical snapshot of live data, not an archival copy of historical log
+records. As with all Store operations, serialize calls from multiple threads.
 
 ## C++ API
 

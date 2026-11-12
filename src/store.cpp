@@ -480,6 +480,37 @@ Stats Store::stats() const {
             impl_->file_bytes, impl_->live_value_bytes};
 }
 
+void Store::snapshot(const std::filesystem::path& destination) const {
+    if (destination.empty() || destination.native().find('\0') != std::string::npos) {
+        throw Error(ErrorCode::invalid_argument, "snapshot path must be nonempty and contain no NUL bytes");
+    }
+    impl_->healthy();
+    auto parent = destination.parent_path();
+    if (parent.empty()) parent = ".";
+    TemporaryFile temporary(parent);
+    (void)control_file(temporary.get(), F_SETFD,
+                       control_file(temporary.get(), F_GETFD) | FD_CLOEXEC);
+    lock_file(temporary.get());
+    const auto file_header = detail::make_file_header();
+    write_all(temporary.get(), file_header.data(), file_header.size());
+    // The source lock stays held. One bounded value is materialized at a time,
+    // and get() rechecks its header, key and payload checksum before copying.
+    for (const auto& [key, entry] : impl_->index) {
+        (void)entry;
+        const auto value = get(key).value();
+        const auto header = detail::make_record_header(detail::Kind::put, key, value);
+        write_all(temporary.get(), header.data(), header.size());
+        write_all(temporary.get(), key.data(), key.size());
+        write_all(temporary.get(), value.data(), value.size());
+    }
+    sync_file(temporary.get());
+    int status;
+    do { status = ::link(temporary.name(), destination.c_str()); } while (status < 0 && errno == EINTR);
+    if (status < 0) io_error("cannot publish snapshot (destination must not exist)");
+    temporary.remove_name();
+    sync_parent(destination);
+}
+
 std::uint64_t Store::repaired_bytes() const noexcept { return impl_->repaired; }
 
 } // namespace pocketkv

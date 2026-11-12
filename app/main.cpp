@@ -26,6 +26,7 @@ void usage(std::ostream& out) {
         << "  keys-prefix PREFIX [LIMIT [AFTER]]\n"
         << "                     Page matching keys (default 100, maximum 1000)\n"
         << "  stats              Show record, key, byte and live-value counts\n"
+        << "  snapshot NEW_PATH  Write a compact durable copy without overwriting\n"
         << "  verify             Validate the entire database without repairing it\n"
         << "  repair             Truncate only a structurally incomplete final record\n\n"
         << "Global options: --help, --version\n"
@@ -105,7 +106,8 @@ int main(int argc, char* argv[]) {
     const std::string_view command(argv[2]);
     const bool no_arguments = command == "init" || command == "keys" || command == "stats" || command == "verify" || command == "repair";
     const bool stdin_value = command == "put-stdin";
-    const bool one_argument = command == "get" || command == "get-raw" || command == "delete" || stdin_value;
+    const bool snapshot = command == "snapshot";
+    const bool one_argument = command == "get" || command == "get-raw" || command == "delete" || stdin_value || snapshot;
     const bool page = command == "keys-prefix";
     if ((!no_arguments && !one_argument && command != "put" && !page) ||
         (page && (argc < 4 || argc > 6)) ||
@@ -131,7 +133,7 @@ int main(int argc, char* argv[]) {
         }
         // Validate command arguments before opening a Store: a rejected put
         // must not create a database as a side effect of constructor success.
-        if (one_argument || command == "put") {
+        if ((one_argument && !snapshot) || command == "put") {
             const std::string_view key(argv[3]);
             if (key.empty() || key.size() > pocketkv::Store::max_key_bytes) {
                 throw pocketkv::Error(pocketkv::ErrorCode::invalid_argument,
@@ -162,6 +164,9 @@ int main(int argc, char* argv[]) {
         } else if (command == "delete") {
             if (!database.erase(argv[3])) return missing();
             std::cout << "Deleted.\n";
+        } else if (snapshot) {
+            database.snapshot(argv[3]);
+            std::cout << "Snapshot saved.\n";
         } else if (command == "keys") {
             for (const auto& key : database.keys()) std::cout << escaped(key) << '\n';
         } else if (page) {
