@@ -105,8 +105,9 @@ producer exited successfully before closing its pipe.
 
 The library exposes `db.snapshot("notes-backup.db")`. A snapshot preserves all
 current key/value bytes, including binary data and empty values, while omitting
-deleted keys and superseded records. It validates each live record, uses at most
-one value of additional payload memory, and keeps the source lock throughout.
+deleted keys and superseded records. It validates each live record, bounds payload
+buffering by the maximum record size rather than the database size, and keeps the
+source lock throughout.
 The source is unchanged and subsequent source writes do not affect the copy.
 
 The destination must not exist, including as a symlink. A private file in its
@@ -223,7 +224,7 @@ destructor async-signal-safe after a multithreaded process forks; such children
 must follow the platform's fork/exec restrictions.
 
 The log grows with every update; deleted and overwritten payloads remain on disk.
-There is no compaction, transaction API, SQL, concurrent reader mode, encryption,
+There is no in-place compaction, transaction API, SQL, concurrent reader mode, encryption,
 Windows backend, or network-filesystem guarantee. A bounded value size limits each
 read allocation, but total index memory grows with the number and length of live
 keys. Every CLI invocation scans the log, so this implementation favors clarity
@@ -233,7 +234,7 @@ The [reproducible storage experiment](docs/benchmarks.md) measures warm reopen,
 indexed reads and fsync-per-put writes as overwrite history grows. It includes
 the benchmark executable, raw trial data, timing boundaries and limitations.
 
-Next steps: atomic compaction with a documented locking protocol and configurable
+Next steps: atomic in-place compaction with a documented locking protocol and configurable
 sync policy. These are future work.
 
 ## Testing and design

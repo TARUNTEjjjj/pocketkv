@@ -1,5 +1,45 @@
 # Verification
 
+## Submission review · 2026-11-13
+
+Reviewed the storage and format implementation, CLI, snapshot publication,
+installation configuration and existing failure tests at baseline `37826e2`.
+No new storage correctness defect was reproduced in this review. The README now
+distinguishes compact copies from future in-place compaction and describes
+bounded payload buffering without claiming a single value-sized allocation.
+
+On Linux x86-64 with GCC 14.2.0, CMake 4.4.4 and Python 3.12.14, all **nine CTest
+entries passed** in both configurations below. Warnings were treated as errors
+and benchmarks were enabled. Release also tested the relocated package with
+custom binary, library and header directories.
+
+```sh
+cmake -S . -B build-review -DCMAKE_BUILD_TYPE=Release \
+  -DPOCKETKV_WARNINGS_AS_ERRORS=ON -DPOCKETKV_BUILD_BENCHMARKS=ON \
+  -DCMAKE_INSTALL_BINDIR=tools/bin -DCMAKE_INSTALL_LIBDIR=lib64 \
+  -DCMAKE_INSTALL_INCLUDEDIR=headers
+cmake --build build-review --parallel
+ctest --test-dir build-review --output-on-failure
+
+cmake -S . -B build-sanitize-review -DCMAKE_BUILD_TYPE=Debug \
+  -DPOCKETKV_SANITIZERS=ON -DPOCKETKV_WARNINGS_AS_ERRORS=ON \
+  -DPOCKETKV_BUILD_BENCHMARKS=ON
+cmake --build build-sanitize-review --parallel
+ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-sanitize-review --output-on-failure
+```
+
+The suites cover storage recovery/corruption, key pagination, snapshots, injected
+I/O failures, CLI help/workflows, real-process scenarios, benchmark accounting and
+an installed external consumer. The initial sanitizer run could not complete
+LeakSanitizer's process inspection in this execution environment. Only leak
+detection was disabled for the successful rerun; AddressSanitizer and
+UndefinedBehaviorSanitizer remained enabled. This is **not a passing local leak
+check**. The normal CI sanitizer configuration remains unchanged.
+
+These are deterministic and process-failure checks, not physical power-loss,
+network-filesystem or concurrent-reader guarantees. Earlier dated results below
+describe their own source revisions and platforms.
+
 ## Binary imports and process recovery · 2026-11-10
 
 On macOS ARM64 with Apple Clang 21, CMake 4.4.5 and Python 3.9.6, all eight
