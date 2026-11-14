@@ -6,3 +6,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Private transport cache; publish only the normalized resource snapshot.
+resources/*.cache.json
+resources/*.tmp

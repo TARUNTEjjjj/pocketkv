@@ -265,3 +265,6 @@ AddressSanitizer/UndefinedBehaviorSanitizer build.
 
 Licensed under [MIT](LICENSE).
 
+## GitHub resource collection
+
+Explore the project-specific [resource catalog](resources/README.md): curated references, star-ranked discovery, dated source metadata, cached failure recovery and an optional read-only server API. The repository includes a daily refresh workflow; hosted sites still follow their existing deployment process.
