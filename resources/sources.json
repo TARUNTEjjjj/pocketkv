@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "project": "pocketkv",
+  "title": "PocketKV storage references",
+  "minStars": 500,
+  "maxPerCategory": 12,
+  "categories": [
+    {
+      "id": "storage",
+      "title": "Storage engines",
+      "queries": [
+        "topic:key-value-store"
+      ],
+      "seeds": [
+        "google/leveldb",
+        "meta/rocksdb"
+      ]
+    },
+    {
+      "id": "databases",
+      "title": "Database internals",
+      "queries": [
+        "topic:database language:C++"
+      ],
+      "seeds": [
+        "duckdb/duckdb",
+        "redis/redis"
+      ]
+    }
+  ]
+}
