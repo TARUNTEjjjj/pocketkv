@@ -4,12 +4,15 @@
 #include <array>
 #include <cerrno>
 #include <charconv>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <iostream>
 #include <string>
 #include <string_view>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -150,40 +153,64 @@ int main(int argc, char* argv[]) {
         pocketkv::Options options;
         options.create_if_missing = command == "init" || command == "put" || stdin_value;
         options.repair_incomplete_tail = command == "repair";
-        pocketkv::Store database(argv[1], options);
+        // Finish with the database before printing anything. Closing the Store
+        // releases its exclusive lock, so a reader that stops reading the output
+        // (a pager, a slow pipe) cannot lock every other command out. Keep the
+        // results themselves rather than text formatted into a buffer: printing
+        // them straight to std::cout adds no copy of a large value or listing,
+        // and finish_output() then sees every failure to print, including one
+        // caused by running out of memory.
+        bool found = true;
+        std::string value;
+        std::vector<std::string> keys;
+        pocketkv::Stats info{};
+        std::uint64_t repaired = 0;
+        {
+            pocketkv::Store database(argv[1], options);
+            if (command == "put" || stdin_value) {
+                database.put(argv[3], stdin_value ? std::string_view(input) : std::string_view(argv[4]));
+            } else if (command == "get" || command == "get-raw") {
+                auto stored = database.get(argv[3]);
+                found = stored.has_value();
+                if (found) value = std::move(*stored);
+            } else if (command == "delete") {
+                found = database.erase(argv[3]);
+            } else if (snapshot) {
+                database.snapshot(argv[3]);
+            } else if (command == "keys") {
+                keys = database.keys();
+            } else if (page) {
+                const auto after = argc == 6 ? std::optional<std::string_view>(argv[5]) : std::nullopt;
+                keys = database.keys_page(argv[3], page_limit, after);
+            } else if (command == "repair") {
+                repaired = database.repaired_bytes();
+            } else if (command == "stats" || command == "verify") {
+                info = database.stats();
+            }
+        }
+        if (!found) return missing();
         if (command == "init") {
             std::cout << "Ready.\n";
         } else if (command == "put" || stdin_value) {
-            database.put(argv[3], stdin_value ? std::string_view(input) : std::string_view(argv[4]));
             std::cout << "Saved.\n";
         } else if (command == "get" || command == "get-raw") {
-            const auto value = database.get(argv[3]);
-            if (!value) return missing();
-            std::cout.write(value->data(), static_cast<std::streamsize>(value->size()));
+            std::cout.write(value.data(), static_cast<std::streamsize>(value.size()));
             if (command == "get") std::cout.put('\n');
         } else if (command == "delete") {
-            if (!database.erase(argv[3])) return missing();
             std::cout << "Deleted.\n";
         } else if (snapshot) {
-            database.snapshot(argv[3]);
             std::cout << "Snapshot saved.\n";
-        } else if (command == "keys") {
-            for (const auto& key : database.keys()) std::cout << escaped(key) << '\n';
-        } else if (page) {
-            const auto after = argc == 6 ? std::optional<std::string_view>(argv[5]) : std::nullopt;
-            for (const auto& key : database.keys_page(argv[3], page_limit, after)) std::cout << escaped(key) << '\n';
+        } else if (command == "keys" || page) {
+            for (const auto& key : keys) std::cout << escaped(key) << '\n';
         } else if (command == "repair") {
-            std::cout << "Repaired " << database.repaired_bytes() << " bytes.\n";
+            std::cout << "Repaired " << repaired << " bytes.\n";
+        } else if (command == "verify") {
+            std::cout << "OK: " << info.record_count << " records, " << info.key_count << " keys.\n";
         } else {
-            const auto info = database.stats();
-            if (command == "verify") {
-                std::cout << "OK: " << info.record_count << " records, " << info.key_count << " keys.\n";
-            } else {
-                std::cout << "keys: " << info.key_count << '\n'
-                          << "records: " << info.record_count << '\n'
-                          << "file_bytes: " << info.file_bytes << '\n'
-                          << "live_value_bytes: " << info.live_value_bytes << '\n';
-            }
+            std::cout << "keys: " << info.key_count << '\n'
+                      << "records: " << info.record_count << '\n'
+                      << "file_bytes: " << info.file_bytes << '\n'
+                      << "live_value_bytes: " << info.live_value_bytes << '\n';
         }
         return finish_output();
     } catch (const pocketkv::Error& error) {

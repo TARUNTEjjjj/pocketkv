@@ -36,8 +36,15 @@ struct Stats {
 };
 
 // Exclusive advisory lock for this object's lifetime. The object is not
-// thread-safe: callers must serialize operations. Each mutation fsyncs its
-// append before updating the in-memory index or returning success.
+// thread-safe: callers must serialize operations. Each mutation syncs its
+// append (fsync; fcntl(F_FULLFSYNC) on macOS) before updating the in-memory
+// index or returning success. After a failed append, the Store tries to truncate
+// the file back to its last acknowledged record and to sync that cut, both best
+// effort: if either fails too, the failed operation's on-disk outcome is
+// uncertain. Either way, the Store refuses further operations until reopened.
+// Methods throw Error, or std::bad_alloc when memory runs out; put and erase
+// allocate before appending, so a mutation whose record was synced always
+// returns normally.
 // Data operations reject inherited instances in forked child processes.
 class Store {
 public:
@@ -66,7 +73,7 @@ public:
     [[nodiscard]] Stats stats() const;
     // Write a compact, independently usable snapshot to a new path. Includes
     // only live keys, validates each value, and never replaces a destination.
-    // Publication is atomic; success includes file and directory fsync.
+    // Publication is atomic; success includes file and directory sync.
     void snapshot(const std::filesystem::path& destination) const;
     [[nodiscard]] std::uint64_t repaired_bytes() const noexcept;
 

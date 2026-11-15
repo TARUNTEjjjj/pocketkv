@@ -83,7 +83,18 @@ if(BUILD_TESTING)
     add_test(NAME cli-help COMMAND pocketkv --help)
     find_package(Python3 3.9 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
-        add_test(NAME cli-workflows COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py $<TARGET_FILE:pocketkv>)
+        # A CLI build whose large allocations fail checks that running out of
+        # memory is reported, never printed as partial output. Sanitizer builds
+        # skip it: AddressSanitizer brings its own operator new.
+        set(pocketkv_cli_test_options)
+        if(NOT POCKETKV_SANITIZERS)
+            add_executable(pocketkv-limited-cli app/main.cpp tests/allocation_limit.cpp)
+            target_link_libraries(pocketkv-limited-cli PRIVATE PocketKV::pocketkv)
+            pocketkv_configure(pocketkv-limited-cli)
+            set(pocketkv_cli_test_options --allocation-limited $<TARGET_FILE:pocketkv-limited-cli>)
+        endif()
+        add_test(NAME cli-workflows COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py
+            $<TARGET_FILE:pocketkv> ${pocketkv_cli_test_options})
         set_tests_properties(cli-workflows PROPERTIES TIMEOUT 120)
         add_executable(pocketkv-scenario-driver tests/scenario_driver.cpp)
         target_link_libraries(pocketkv-scenario-driver PRIVATE PocketKV::pocketkv)

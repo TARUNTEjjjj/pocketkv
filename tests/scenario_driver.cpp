@@ -20,7 +20,7 @@ void acknowledge(const std::string& message) {
 } // namespace
 
 // Kept separate from the CLI: the parent controls when this process writes and
-// kills it without running destructors. Every ACK follows Store::put's fsync.
+// kills it without running destructors. Every ACK follows Store::put's sync.
 int main(int argc, char* argv[]) {
     if (argc != 2) return 2;
     try {

@@ -18,10 +18,16 @@ struct RecordHeader {
     std::uint32_t value_size;
     std::uint32_t payload_crc;
 };
+// Encoded header bytes together with the fields they encode, so a writer
+// need not decode what it just built.
+struct EncodedRecordHeader {
+    std::array<std::uint8_t, record_header_size> bytes;
+    RecordHeader fields;
+};
 
 [[nodiscard]] std::array<std::uint8_t, file_header_size> make_file_header();
 void validate_file_header(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::array<std::uint8_t, record_header_size> make_record_header(Kind kind, std::string_view key, std::string_view value);
+[[nodiscard]] EncodedRecordHeader make_record_header(Kind kind, std::string_view key, std::string_view value);
 [[nodiscard]] RecordHeader parse_record_header(std::span<const std::uint8_t> bytes);
 // Validate available fixed fields and reject lengths with no valid completion.
 // Used only to classify a final short suffix; it does not certify missing bytes.

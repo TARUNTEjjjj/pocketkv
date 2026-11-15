@@ -15,8 +15,11 @@ targets Linux and macOS, with no third-party runtime dependencies.
 
 Requires a C++20 compiler (GCC or Clang), CMake 3.20+, and a build tool such as Make
 or Ninja. Python 3.9+ enables the additional CLI integration tests.
-Creating a database requires a writable parent directory on a local filesystem
-that supports hard links, advisory locking, and directory synchronization.
+Creating a database requires a readable, writable parent directory on a local
+filesystem that supports hard links, advisory locking, and directory synchronization.
+Opening a database that still holds only its header also requires read permission
+on its directory: the Store opens and syncs that directory, in case the database's
+creator failed before syncing it.
 
 ```sh
 git clone https://github.com/TARUNTEjjjj/pocketkv.git
@@ -66,8 +69,10 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 
 Exit codes: **0** success, **1** missing key, **2** invalid input, database error,
 or input/output failure. Key/value arguments are validated before the database is
-opened, so an invalid `put` does not create an empty file. Every output command,
-including help and version, checks its final write. A mutation may already be
+opened, so an invalid `put` does not create an empty file. Each command closes the
+database, releasing its lock, before it prints anything, so a pager or slow pipe
+reading `keys`, `keys-prefix` or `get-raw` output never locks other commands out.
+Every output command, including help and version, checks its final write. A mutation may already be
 saved when printing its acknowledgement fails; an output error does not roll it back.
 Writing to a closed pipe instead ends the command with SIGPIPE (shells report
 status 141), and a mutation may already be saved in that case too.
@@ -137,7 +142,10 @@ int main() {
 
 The `Store` owns its file descriptor and exclusive advisory lock through RAII.
 It is neither copyable nor movable. Methods throw `pocketkv::Error`, with a
-structured `ErrorCode`; `get` returns `std::nullopt` for absent keys.
+structured `ErrorCode`; `get` returns `std::nullopt` for absent keys. When memory
+runs out, a method throws `std::bad_alloc` instead. `put` and `erase` allocate all
+they need before appending, so a mutation whose record was synced always returns
+normally.
 
 ### Bounded key discovery
 
@@ -180,8 +188,13 @@ Configure that project with `-DCMAKE_PREFIX_PATH=/absolute/path/to/pocketkv/inst
 See [the example](examples/basic.cpp) and [external consumer test](tests/consumer).
 Custom `CMAKE_INSTALL_BINDIR`, `CMAKE_INSTALL_LIBDIR` and
 `CMAKE_INSTALL_INCLUDEDIR` values are supported. Keep them relative to move the
-installation as a unit. Tests run the installed CLI and a separate library
-consumer after moving the installation, including with custom directories.
+installation as a unit. Given only the prefix, CMake finds the package under
+`lib` on every platform, but under other library directories only on some
+platforms (Debian and Ubuntu skip `lib64`) or never (`tools/lib`). With any
+library directory other than `lib`, also pass
+`-DPocketKV_DIR=/absolute/path/to/pocketkv/install/<libdir>/cmake/PocketKV`.
+Tests move the installation, run its CLI, and configure, build and run a
+separate library consumer exactly this way, including with custom directories.
 
 ## Integrity and recovery
 
@@ -198,10 +211,33 @@ consumer after moving the installation, including with custom directories.
 - Repair does not reconstruct missing bytes or fix a complete corrupted record.
   A short header has missing checksum bytes that cannot be verified. An otherwise
   valid truncated suffix cannot reveal whether its cause was a crash or corruption.
-- Each successful mutation calls `fsync` before updating the in-memory index and
-  returning. New-file initialization also syncs the parent directory. After an
-  append or sync failure, the object refuses further operations until reopened;
-  the failed operation's on-disk outcome may be uncertain.
+- A crash can also leave the file longer than its last record, with space that
+  was never written reading back as zero bytes. Every record starts with nonzero
+  magic, so zeros from the end of the last complete record to the end of the file
+  hold no record: they are an error by default, and `repair` discards them like
+  an incomplete final record. Any other bytes there are corruption, including
+  stale non-zero bytes, zeros followed by data, and a final record whose complete
+  header is followed by zeros instead of its payload, as a crash during a large
+  put can leave. Every command refuses such a file, `repair` included, and the
+  error names the byte offset of the failing record, where the valid records end.
+- Recovering the records before that offset takes a manual cut. While nothing has
+  the database open, keep a copy and keep only the bytes before the offset: for an
+  error that ends in `at byte 101`, run `cp demo.db demo.db.bak`, then
+  `head -c 101 demo.db.bak > demo.db`, then `verify`. The cut discards the failing
+  record and everything after it, so keep the copy until the remaining values
+  are confirmed.
+- Each mutation appends its record with one `writev` call, then calls `fsync`
+  before updating the in-memory index and returning. On macOS it uses
+  `fcntl(F_FULLFSYNC)` instead, because macOS `fsync` does not flush the drive's
+  write cache; filesystems without `F_FULLFSYNC` fall back to `fsync`. New-file
+  initialization also syncs the parent directory, and so does opening a database
+  that still holds only its header, in case its creator failed before that sync.
+- After an append or sync failure, the Store truncates the file back to its last
+  acknowledged record and syncs that, so no later open adopts the failed record;
+  the object then refuses further operations until reopened. If the truncation or
+  its sync fails too, the failed operation's on-disk outcome is uncertain. A
+  process killed in the middle of an append can still leave an incomplete final
+  record.
 
 Keep a copy before deliberately running `repair`. CRC32 detects accidental damage;
 it is not authentication or encryption. Tests exercise process exits and truncated
@@ -222,6 +258,18 @@ reports lock contention while the parent owns that database. Closing the child's
 copy does not release the parent's lock. This guard does not make Store or its
 destructor async-signal-safe after a multithreaded process forks; such children
 must follow the platform's fork/exec restrictions.
+A Store's lock ends when the process that opened it destroys that Store, even if
+a forked child still holds its inherited copy: the parent, or the child with a
+fresh Store, can then reopen the database.
+A path such as `/dev/fd/3` that names an already open descriptor is rejected.
+In a sticky directory that other users can write, whether world-writable such as
+`/tmp` or group-writable, an existing database must belong to you or to the
+directory's owner. Linux applies this rule to `O_CREAT` opens with
+`fs.protected_regular=2`; level 1, the default on many distributions, covers
+only world-writable directories. A file another user planted there fails with
+`ErrorCode::invalid_argument` instead of collecting your records. Elsewhere, anyone
+who can write the directory can replace its files, so keep databases in
+directories other users cannot write.
 
 The log grows with every update; deleted and overwritten payloads remain on disk.
 There is no in-place compaction, transaction API, SQL, concurrent reader mode, encryption,
@@ -231,7 +279,7 @@ keys. Every CLI invocation scans the log, so this implementation favors clarity
 and inspectability over large-database throughput.
 
 The [reproducible storage experiment](docs/benchmarks.md) measures warm reopen,
-indexed reads and fsync-per-put writes as overwrite history grows. It includes
+indexed reads and puts that each sync to disk as overwrite history grows. It includes
 the benchmark executable, raw trial data, timing boundaries and limitations.
 
 Next steps: atomic in-place compaction with a documented locking protocol and configurable
@@ -252,9 +300,11 @@ explicit repair, CLI contracts, and installation into a separate C++ project.
 The `real-world-scenarios` suite adds file and pipe imports, a session-cache
 lifecycle, interrupted input, and SIGKILL/restart checks against an independent
 record decoder and acknowledgement ledger.
-An isolated test build also injects sync failures, read failures, interruptions
-and short reads to check error handling and recovery without changing the
-production library's system calls.
+An isolated test build also injects sync failures, read failures, interruptions,
+short reads and writes, allocation failures and a foreign file owner to check
+error handling and recovery without changing the production library's system
+calls. A test build of the CLI fails large allocations, to check that running out
+of memory is reported as an error rather than printed as partial output.
 GitHub Actions runs GCC and Clang on Linux and Clang on macOS, including an
 AddressSanitizer/UndefinedBehaviorSanitizer build.
 

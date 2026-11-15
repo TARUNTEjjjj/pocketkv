@@ -49,10 +49,19 @@ one possible completion in its allowed range. For example, key-length bytes
 `00 00` cannot become a valid key length: the completed number is either zero or
 at least 65,536. A single `00` byte can still become 256–4,096 and is accepted.
 Any nonzero value-length byte is invalid for an erase. A complete valid header whose
-payload extends beyond end-of-file is also structurally incomplete. Missing bytes
-cannot be checksum-validated. Repair discards the whole incomplete record; normal
-opens reject it. Fully present malformed records are corruption and are never
-discarded by repair.
+payload extends beyond end-of-file is also structurally incomplete. So is a run of
+zero bytes from a record boundary to end-of-file, which is how space that a crash
+extended but never wrote reads back: every record starts with `PKVR`, so those
+bytes hold no record. Missing bytes cannot be checksum-validated. Repair discards
+the whole incomplete record; normal opens reject it. Fully present malformed
+records are corruption and are never discarded by repair, and neither is a tail
+that mixes zeros with other bytes. That includes a complete final record whose
+payload reads back as zeros after a crash tore it, and stale non-zero bytes after
+the last record.
 
-There is no resynchronization after an invalid record. CRC32 is a corruption check,
-not a cryptographic guarantee against deliberate modification or collisions.
+There is no resynchronization after an invalid record; the error names the byte
+offset of the record that failed, where the valid records end. Keeping only the
+bytes before that offset, by hand, recovers the earlier records and discards the
+failing record and everything after it (the README shows the steps). CRC32 is a
+corruption check, not a cryptographic guarantee against deliberate modification
+or collisions.

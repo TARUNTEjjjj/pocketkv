@@ -1,5 +1,52 @@
 # Verification
 
+## Code-review fixes · 2026-11-15
+
+A code review of the library, CLI, packaging and tests produced eighteen
+findings. Main had already fixed three of them when these fixes were moved onto
+`d14a540`: databases on closed standard descriptors (PR #2's `20c42f7`, which
+`aefb245` had carried forward and `d14a540` merged; see "Closed standard
+descriptors" below), the argument-size limit of `put` (`aefb245`, through
+`put-stdin`), and this record's entry count (the dated sections below). This
+change fixes the other fifteen, one of them in part (see the review notes under
+"Independent integration checks"), and carries them into the newer features: a
+snapshot's private file is close-on-exec from creation, each of its records takes
+one `writev`, and its file and directory use the durable sync; `keys-prefix`,
+`put-stdin` and `snapshot` close the database before they print, like every other
+command. Private files now come from `mkostemp` instead of `mkstemp`, and a
+descriptor it returns at 0–2 is still moved above 2 as described below.
+
+On macOS ARM64 with Apple Clang 21, CMake 4.4.5 and Python 3.9.6, with warnings
+treated as errors, three builds configured like the CI matrix legs passed all
+nine CTest entries: Debug with AddressSanitizer plus UndefinedBehaviorSanitizer,
+Release with custom `tools/bin`, `lib64` and `headers` install directories, and a
+build with no build type. CI configures every build with
+`-DPOCKETKV_BUILD_BENCHMARKS=ON`, which registers `benchmark-accounting`. The
+README's Release and sanitizer builds leave that option off and passed the other
+eight entries.
+
+| Check | Coverage | Local result |
+| --- | --- | --- |
+| `storage-core` | Fifteen groups, 7,440 runtime checks | Pass in all five builds |
+| `key-pages` | 357 checks | Pass in all five builds |
+| `snapshots` | 28 checks | Pass in all five builds |
+| `storage-faults` | Sixteen groups, 194 injected-fault checks; one group needs macOS `F_FULLFSYNC`, and sanitizer builds skip the two allocation groups (14 groups, 181 checks) | Pass in all five builds |
+| `cli-help` | CLI can launch and print help | Pass in all five builds |
+| `cli-workflows` | 356 command/format checks with Python; sanitizer builds skip the 20 that need a CLI build with an allocation limit (336 checks) | Pass in all five builds |
+| `real-world-scenarios` | About 500 checks (493 to 508 in these runs); the count varies with completed writes during racing process termination | Pass in all five builds |
+| `benchmark-accounting` | Only with `-DPOCKETKV_BUILD_BENCHMARKS=ON`: 106 checks of the benchmark's CSV rows, v1 record and file-byte arithmetic, `--directory` with an invalid `TMPDIR`, input validation and cleanup. They raise errors explicitly, so `python -O` cannot strip them | Pass in the three benchmark builds |
+| `installed-consumer` | Move the installed package, run CLI put/get, then configure a separate consumer as the README describes (`CMAKE_PREFIX_PATH` alone for `lib`, plus `PocketKV_DIR` for other library directories), require that it used the moved package, and link and run it | Pass in all five builds, including the custom layout |
+
+The same nine entries also passed with `F_FULLFSYNC` undefined at compile time,
+which selects the plain-`fsync` path that every non-Apple platform takes (fault
+suite: 15 groups and 175 checks, or 13 and 162 under sanitizers). The Linux GCC
+and Clang legs themselves, and LeakSanitizer, run only in GitHub Actions and were
+not run for this record.
+
+The check lists and review notes under "Storage checks" and "Independent
+integration checks" below were extended in place for these fixes. The 2026-11-01
+paragraph and its table keep their historical counts.
+
 ## Closed standard descriptors · 2026-11-15
 
 PR #2, the fix that keeps database descriptors off 0–2, was brought up to date
@@ -189,6 +236,12 @@ all five entries. The same suite runs in [GitHub Actions](https://github.com/TAR
 - Corrupt magic, version, checksums, operation, reserved fields, invalid lengths,
   deletion payloads, garbage suffixes, and every short file-header length are
   rejected without modifying the file, including in repair mode.
+- Zero bytes after the last complete record, from 1 byte to a 4,096-byte block,
+  are an incomplete tail: a normal open preserves them, and repair removes exactly
+  them, keeping a final record that ends in zero bytes of its own. Stale bytes,
+  zeros followed by data or by a complete record, and a header followed by zeros
+  stay corruption in both modes, and the error names the offset where the valid
+  records end.
 - Same-process, child-process, and hard-link alias lock contention. A child
   acknowledges a put then calls `_exit` without running the Store destructor;
   the parent can reopen and read it.
@@ -198,18 +251,49 @@ all five entries. The same suite runs in [GitHub Actions](https://github.com/TAR
   scheduling stress test, not proof of every possible interleaving.
 - A child-only `RLIMIT_FSIZE` forces partial initialization and partial append.
   Failed initialization leaves no destination or temporary file. A failed append
-  poisons that Store; reopening requires explicit repair, which preserves earlier
-  acknowledged data. Resource limits in the parent process are unchanged.
-- Controlled `fsync` failures during initialization, put, erase, repair and
-  directory synchronization. Tests verify writer rejection after failed sync,
-  valid remaining data and cleanup, and complete uncertain writes on reopen.
-- Injected EINTR, short reads, lookup read errors and startup read errors. Tests
-  verify retries, byte preservation and release of locks after failed opens.
+  poisons that Store and is truncated back to the acknowledged records, so the
+  next open needs no repair and keeps earlier acknowledged data. Resource limits
+  in the parent process are unchanged.
+- Controlled sync failures (`fsync`, or `F_FULLFSYNC` on macOS) during
+  initialization, put, erase, repair and directory synchronization. Tests verify
+  writer rejection after failed sync, valid remaining data and cleanup, and that a
+  put or erase whose sync failed is truncated away, with the truncation synced, so
+  a reopen sees only acknowledged records.
+- Each put and erase reaches the file in one `writev` call. An interrupted write,
+  and short writes cut at every byte of a record, resume where they stopped and
+  replay correctly. A snapshot makes one call for its file header and one for
+  each record.
+- In a sticky directory that other users can write, an existing database owned by
+  another user, including a competing creator's, is refused without being changed
+  or locked. One owned by the directory's owner, or kept where other users cannot
+  add files, still opens. Wrappers report the foreign owner.
+- Outside sanitizer builds, a replaced `operator new` fails each allocation of a
+  put in turn: the put must fail before writing anything and leave the Store
+  usable. Opening 18 records of one key must allocate exactly as much as opening 2.
+- Every commit point (new header, new directory entry, put, erase, repair, and a
+  snapshot's file and directory) must reach the durable sync: `F_FULLFSYNC` on
+  macOS, never plain `fsync` while `F_FULLFSYNC` works. Where the filesystem
+  rejects `F_FULLFSYNC` as unsupported, creation, puts and snapshots fall back to
+  `fsync`; an `F_FULLFSYNC` EIO is reported, never retried as `fsync`.
+- A new private file, a database's or a snapshot's, must already be close-on-exec
+  when `mkostemp` returns it.
+- Reopening a database whose directory sync failed, and losing a creation race to
+  a rival that published a header-only file, both sync the directory; opening a
+  database that has records does not.
+- Injected EINTR (including on the directory sync), short reads, lookup read
+  errors and startup read errors. Tests verify retries, byte preservation and
+  release of locks after failed opens.
   Substitutions apply only to a separate test build of the Store; the production
   library calls ordinary system functions.
 - Children with stdin, stdout or stderr closed create and reopen a Store. That
   descriptor must stay closed, so stray writes to it fail, and the file must hold
   exactly the acknowledged records.
+- A child forked while a Store is open keeps its inherited copy while the parent
+  destroys the Store: the parent can reopen, and the child can open a fresh Store,
+  while the child is still alive. A child that destroys its inherited copy leaves
+  the parent's lock in place.
+- `/dev/fd/N` aliases of an open database, with and without `O_APPEND`, are
+  refused without writing anything or leaving a lock on the caller's descriptor.
 
 ## Independent integration checks
 
@@ -217,12 +301,23 @@ The Python suite decodes the produced file with `struct` and `zlib.crc32`, check
 headers, payloads, updates, empty values and deletion records independently of the
 C++ codec. It also exercises missing keys/files, invalid arguments, byte-escaped
 keys, exact binary output, recovery, and complete corruption that repair must
-refuse. CLI tests reject invalid keys before creating files and check stdout
-failures for all output-producing commands, with stdout both unwritable and
-closed (`>&-`). Saved mutations are verified after an acknowledgement-output
-failure, including creation, updates, deletion and repair. With stdout or stderr
-closed, the file must hold only acknowledged records. The README's command
-sequence was run on a fresh temporary database and its shown output matched.
+refuse. A zero-filled tail after acknowledged records asks for repair, and repair
+restores exactly the acknowledged bytes; other tails are refused with the offset
+where the valid records end. CLI tests reject invalid keys before creating files and
+check stdout failures for all output-producing commands, with stdout both
+unwritable and closed (`>&-`). Saved mutations are verified after an
+acknowledgement-output failure, including creation, updates, deletion and repair.
+With stdout or stderr closed, the file must hold only acknowledged records.
+Commands given the database as `/dev/fd/N`, page queries and snapshots included,
+must fail without changing it or creating a copy. A `keys` listing of
+4,096 long keys, a full `keys-prefix` page of 1,000 long keys and a 1 MiB `get-raw`
+whose output nobody reads yet must release the lock by their first output byte, so a
+concurrent `put` succeeds. Outside sanitizer builds, a test build of the CLI fails
+every allocation above a limit, and runs the same `keys` and `get-raw` with limits
+from a quarter of their output's size to three times it: each run must either print
+the complete output and exit 0, or exit 2 with an error, and both outcomes must
+occur. The README's command sequence was run on a fresh temporary database and its
+shown output matched.
 
 The installed-consumer check discovered an exported target-name collision between
 the CLI and static library; the CLI now exports as `PocketKV::cli`, while clients
@@ -240,6 +335,27 @@ the substitutions; injection counters verify the fault path is actually exercise
 A later review found that a CLI started with stdout or stderr closed opened the
 database on that descriptor and appended its own output to the log. Descriptors
 now stay above 2, with library and CLI regression coverage.
+The code review recorded under "Code-review fixes" above found that a child forked
+while a Store was open kept the lock after the parent closed it; that a new database's
+descriptor was briefly inheritable across exec; that macOS commits used
+`fsync`, which does not flush the drive's cache; that a macOS `/dev/fd/N` path
+bypassed `O_APPEND` and the lock; and that opens after a failed directory sync
+never synced the directory. Each is fixed with regression coverage.
+The same review found that a record whose sync failed stayed in the file for the
+next open to adopt; that a record took three `write` calls; that a synced put
+could still throw `std::bad_alloc`; that replay allocated twice per record; that an
+existing database in a shared sticky directory was adopted whoever owned it; and
+that CLI reads kept the lock while their output waited for a reader. These are
+also fixed with regression coverage.
+It also found that repair could not remove the zeros a crash can leave after the
+last record, and that format errors gave no byte offset; that the benchmark
+checks were bare `assert` statements, which `python -O` or `PYTHONOPTIMIZE`
+strips; and that the consumer test always passed `PocketKV_DIR`, so the README's
+prefix-only discovery was never tested (it fails for `tools/lib`, and for `lib64`
+on Debian and Ubuntu). These are fixed with regression coverage, and the README is
+corrected. A final record torn after its header, and stale bytes after the last
+record, still stop every command, `repair` included; the README describes the
+manual cut that recovers the earlier records.
 
 ## What these checks do not establish
 
