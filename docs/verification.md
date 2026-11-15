@@ -1,5 +1,56 @@
 # Verification
 
+## Closed standard descriptors · 2026-11-15
+
+PR #2, the fix that keeps database descriptors off 0–2, was brought up to date
+with main, which had already carried the same change forward on 2026-11-10.
+After the merge no source or test file differs from main. The statements PR #2
+added to the earlier record at the end of this page are kept there, and that
+record's table keeps its 2026-11-01 counts.
+
+On macOS ARM64 with Apple Clang 21, CMake 4.4.5 and Python 3.9.6, all nine CTest
+entries passed in each of the four CI matrix entries: no build type, Release
+with `tools/bin`, `lib64` and `headers` for both the Linux GCC and macOS
+entries, and Debug ASan/UBSan. Apple Clang stood in for the Linux compilers.
+Warnings were treated as errors and benchmarks were enabled. Apple Clang has no
+LeakSanitizer, so this is not a leak check. These counts were measured on the
+merged suite and were identical in every configuration except where noted:
+
+| Check | Coverage |
+| --- | --- |
+| `storage-core` | Twelve groups, 7,342 runtime checks |
+| `key-pages` | 357 checks |
+| `snapshots` | 28 checks |
+| `storage-faults` | Eight groups, 59 injected-I/O checks |
+| `cli-help` | CLI can launch and print help |
+| `cli-workflows` | 268 command/format checks with Python |
+| `real-world-scenarios` | 493 or more checks: each further write completed before a racing kill adds five and each repaired incomplete tail adds two; Release runs usually reported 508 |
+| `benchmark-accounting` | Benchmark CSV accounting, input validation and cleanup |
+| `installed-consumer` | Move the installed package, run CLI put/get, then configure/link/run a separate consumer |
+
+The closed-descriptor regression cases cover creating and reopening a Store with
+each of stdin, stdout and stderr closed, failed relocation under
+`RLIMIT_NOFILE=3`, and the `init`, `put`, `get`, `get-raw`, `keys`, `stats`,
+`verify`, `delete` and `repair` commands. The three commands added since PR #2
+was written reach descriptors only through the same relocating paths: `snapshot`
+creates its private file through the `mkstemp` wrapper and synchronizes the
+directory through the `open` wrapper, `keys-prefix` only reads an opened Store,
+and `put-stdin` reads standard input before any database is opened.
+
+This was also exercised outside the automated suite. Fifty-eight command cases,
+covering all twelve commands, their error paths, help and usage errors, were
+each run with every combination of stdin, stdout and stderr closed, both by
+closing the descriptors before exec and through a shell's `<&-`, `>&-` and
+`2>&-`, against the Release and sanitizer builds. Every resulting file was
+byte-identical to the same case run with all three open, and `verify` accepted
+every database and snapshot except the deliberately damaged inputs. The one
+intended difference is `put-stdin` with stdin closed, which stored nothing: it
+exited with status 2 before opening the database. A descriptor-call trace of the
+Release runs showed each `open` or `mkstemp` result at 0–2 moved above 2, and
+the slot closed again, before any read, write, lock or sync. This is additional
+evidence from one platform, not a substitute for suite coverage of the newer
+commands.
+
 ## Submission review · 2026-11-13
 
 Reviewed the storage and format implementation, CLI, snapshot publication,
@@ -156,6 +207,9 @@ all five entries. The same suite runs in [GitHub Actions](https://github.com/TAR
   verify retries, byte preservation and release of locks after failed opens.
   Substitutions apply only to a separate test build of the Store; the production
   library calls ordinary system functions.
+- Children with stdin, stdout or stderr closed create and reopen a Store. That
+  descriptor must stay closed, so stray writes to it fail, and the file must hold
+  exactly the acknowledged records.
 
 ## Independent integration checks
 
@@ -164,10 +218,11 @@ headers, payloads, updates, empty values and deletion records independently of t
 C++ codec. It also exercises missing keys/files, invalid arguments, byte-escaped
 keys, exact binary output, recovery, and complete corruption that repair must
 refuse. CLI tests reject invalid keys before creating files and check stdout
-failures for all output-producing commands. Saved mutations are verified after
-an acknowledgement-output failure, including creation, updates, deletion and
-repair. The README's command sequence was run on a fresh temporary database and
-its shown output matched.
+failures for all output-producing commands, with stdout both unwritable and
+closed (`>&-`). Saved mutations are verified after an acknowledgement-output
+failure, including creation, updates, deletion and repair. With stdout or stderr
+closed, the file must hold only acknowledged records. The README's command
+sequence was run on a fresh temporary database and its shown output matched.
 
 The installed-consumer check discovered an exported target-name collision between
 the CLI and static library; the CLI now exports as `PocketKV::cli`, while clients
@@ -182,6 +237,9 @@ tested with `tools/bin`, `lib64` and `headers` as custom destinations.
 The Linux GCC run also caught libc inline wrappers bypassing the original read
 fault hook. A test-only forced include header now loads system headers before applying
 the substitutions; injection counters verify the fault path is actually exercised.
+A later review found that a CLI started with stdout or stderr closed opened the
+database on that descriptor and appended its own output to the log. Descriptors
+now stay above 2, with library and CLI regression coverage.
 
 ## What these checks do not establish
 
