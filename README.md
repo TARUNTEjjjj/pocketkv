@@ -53,24 +53,71 @@ Syntax: `pocketkv DATABASE COMMAND [ARGUMENTS]`.
 | --- | --- |
 | `init` | Create an empty database or validate an existing database |
 | `put KEY VALUE` | Insert or replace a value; create the database if absent |
+| `put-stdin KEY` | Read exact value bytes from standard input until EOF, then insert or replace; create the database if absent |
 | `get KEY` | Print a value and a trailing newline |
 | `get-raw KEY` | Write the exact value bytes without an added newline |
 | `delete KEY` | Append a deletion record if the key exists |
 | `keys` | List current keys in bytewise sorted order, escaping nonprintable bytes and backslashes |
+| `keys-prefix PREFIX [LIMIT [AFTER]]` | List a bounded page of matching keys, strictly after an optional raw-key cursor; default 100, maximum 1,000 |
 | `stats` | Show live keys, total log records, file size, and live value bytes |
+| `snapshot NEW_PATH` | Write a compact, independently usable database containing current live keys; refuse an existing destination |
 | `verify` | Scan and validate the complete database without changing it |
 | `repair` | Explicitly discard a structurally incomplete final record |
 
 Exit codes: **0** success, **1** missing key, **2** invalid input, database error,
-or output-write failure. Key/value arguments are validated before the database is
+or input/output failure. Key/value arguments are validated before the database is
 opened, so an invalid `put` does not create an empty file. Every output command,
 including help and version, checks its final write. A mutation may already be
 saved when printing its acknowledgement fails; an output error does not roll it back.
 Writing to a closed pipe instead ends the command with SIGPIPE (shells report
 status 141), and a mutation may already be saved in that case too.
-Only `init` and `put` create missing files. Keys are 1–4,096 bytes; values are
+Only `init`, `put`, and `put-stdin` create missing files. Keys are 1–4,096 bytes; values are
 0–1,048,576 bytes. The library supports embedded NUL bytes. Command-line arguments
-cannot carry NUL bytes; `get` and `get-raw` emit stored bytes unchanged.
+cannot carry NUL bytes and are subject to the operating system's argument-size
+limits. Use `put-stdin` for binary data or large values; `get` and `get-raw` emit
+stored bytes unchanged.
+
+### Files and pipelines
+
+```sh
+./build/pocketkv assets.db put-stdin avatar < avatar.png
+./build/pocketkv assets.db get-raw avatar > restored.png
+cmp avatar.png restored.png
+
+printf 'first line\nsecond line\n' | ./build/pocketkv notes.db put-stdin draft
+./build/pocketkv notes.db get-raw draft
+```
+
+`put-stdin` preserves every byte, including NULs and trailing newlines. Empty input
+stores an empty value. It validates the key before reading, then reads at most
+1,048,577 bytes to detect an oversized value. Input errors and oversized values
+return exit code 2 without creating or changing the database. The database is
+opened only after valid input reaches EOF, so waiting for a producer does not
+hold its lock. EOF ends the value; the CLI cannot detect whether an upstream
+producer exited successfully before closing its pipe.
+
+### Compact snapshots
+
+```sh
+./build/pocketkv notes.db snapshot notes-backup.db
+./build/pocketkv notes-backup.db verify
+```
+
+The library exposes `db.snapshot("notes-backup.db")`. A snapshot preserves all
+current key/value bytes, including binary data and empty values, while omitting
+deleted keys and superseded records. It validates each live record, bounds payload
+buffering by the maximum record size rather than the database size, and keeps the
+source lock throughout.
+The source is unchanged and subsequent source writes do not affect the copy.
+
+The destination must not exist, including as a symlink. A private file in its
+directory is synchronized before atomic publication, followed by directory
+synchronization. Failures before publication leave no destination; a failure
+after publication may leave a complete copy even though the command reports an
+error. Inspect that copy before retrying. The destination filesystem needs the
+same hard-link and synchronization support as ordinary database creation.
+This is a logical snapshot of live data, not an archival copy of historical log
+records. As with all Store operations, serialize calls from multiple threads.
 
 ## C++ API
 
@@ -91,6 +138,35 @@ int main() {
 The `Store` owns its file descriptor and exclusive advisory lock through RAII.
 It is neither copyable nor movable. Methods throw `pocketkv::Error`, with a
 structured `ErrorCode`; `get` returns `std::nullopt` for absent keys.
+
+### Bounded key discovery
+
+Use `keys_page` when copying every live key would use too much memory:
+
+```cpp
+std::optional<std::string> cursor;
+for (;;) {
+    auto page = db.keys_page("user/", 100,
+        cursor ? std::optional<std::string_view>(*cursor) : std::nullopt);
+    if (page.empty()) break;
+    for (const auto& key : page) std::cout << key << '\n';
+    cursor = page.back();
+}
+```
+
+An empty prefix matches all keys. Prefixes may contain NUL bytes and are limited
+to 4,096 bytes; a supplied cursor must be a valid nonempty key. Limits are
+1–1,000 inclusive. The ordered index seeks to the prefix or exclusive cursor,
+then copies at most the requested number of matching keys: O(log N + L) index
+steps for N live keys and page limit L, plus string comparison/copying costs.
+This bounds result memory, not the existing in-memory index or startup scan.
+The file format is unchanged, and page reads append no records.
+
+Pages reflect the current index, not a snapshot. Between calls, deleted cursor
+keys remain valid positions; inserted keys before the cursor will not appear.
+Continue using the last returned raw key until a page is empty. The CLI equivalent
+is `pocketkv data.db keys-prefix 'user/' 100 'user/099'`. CLI output escapes keys
+like `keys`; the `AFTER` argument is the original key, not its escaped display.
 
 Install with `cmake --install build --prefix "$PWD/install"`. A consuming CMake
 project uses:
@@ -137,11 +213,18 @@ what survives a power failure; PocketKV does not promise production-grade durabi
 PocketKV permits **one open Store per database**, including read commands. Every
 open requires read/write access, and callers must serialize use of a Store across
 threads. `flock` is advisory: other programs can ignore it. Renaming, unlinking, or
-replacing an open database, changing it externally, and using an inherited Store
-after `fork` are unsupported. Open fresh Store instances in child processes.
+replacing an open database and changing it externally are unsupported.
+An inherited Store rejects data access and mutation in a forked child with
+`ErrorCode::invalid_argument`, before touching the file or copied index. Its
+`repaired_bytes()` accessor still reports historical constructor metadata.
+Close the child's inherited instance and open a fresh Store; a fresh open still
+reports lock contention while the parent owns that database. Closing the child's
+copy does not release the parent's lock. This guard does not make Store or its
+destructor async-signal-safe after a multithreaded process forks; such children
+must follow the platform's fork/exec restrictions.
 
 The log grows with every update; deleted and overwritten payloads remain on disk.
-There is no compaction, transaction API, SQL, concurrent reader mode, encryption,
+There is no in-place compaction, transaction API, SQL, concurrent reader mode, encryption,
 Windows backend, or network-filesystem guarantee. A bounded value size limits each
 read allocation, but total index memory grows with the number and length of live
 keys. Every CLI invocation scans the log, so this implementation favors clarity
@@ -151,7 +234,7 @@ The [reproducible storage experiment](docs/benchmarks.md) measures warm reopen,
 indexed reads and fsync-per-put writes as overwrite history grows. It includes
 the benchmark executable, raw trial data, timing boundaries and limitations.
 
-Next steps: atomic compaction with a documented locking protocol and configurable
+Next steps: atomic in-place compaction with a documented locking protocol and configurable
 sync policy. These are future work.
 
 ## Testing and design
@@ -166,6 +249,9 @@ ctest --test-dir build-sanitize --output-on-failure
 Tests cover persistence, updates/deletions, binary values, bounds, randomized
 operations against an independent map, locking, partial writes, corruption,
 explicit repair, CLI contracts, and installation into a separate C++ project.
+The `real-world-scenarios` suite adds file and pipe imports, a session-cache
+lifecycle, interrupted input, and SIGKILL/restart checks against an independent
+record decoder and acknowledgement ledger.
 An isolated test build also injects sync failures, read failures, interruptions
 and short reads to check error handling and recovery without changing the
 production library's system calls.
@@ -179,3 +265,6 @@ AddressSanitizer/UndefinedBehaviorSanitizer build.
 
 Licensed under [MIT](LICENSE).
 
+## GitHub resource collection
+
+Explore the project-specific [resource catalog](resources/README.md): curated references, star-ranked discovery, dated source metadata, cached failure recovery and an optional read-only server API. The repository includes a daily refresh workflow; hosted sites still follow their existing deployment process.

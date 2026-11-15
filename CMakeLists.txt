@@ -54,6 +54,18 @@ if(BUILD_TESTING)
     add_test(NAME storage-core COMMAND pocketkv-tests)
     set_tests_properties(storage-core PROPERTIES TIMEOUT 120)
 
+    add_executable(pocketkv-page-tests tests/test_key_pages.cpp)
+    target_link_libraries(pocketkv-page-tests PRIVATE PocketKV::pocketkv)
+    pocketkv_configure(pocketkv-page-tests)
+    add_test(NAME key-pages COMMAND pocketkv-page-tests)
+    set_tests_properties(key-pages PROPERTIES TIMEOUT 120)
+
+    add_executable(pocketkv-snapshot-tests tests/test_snapshots.cpp)
+    target_link_libraries(pocketkv-snapshot-tests PRIVATE PocketKV::pocketkv)
+    pocketkv_configure(pocketkv-snapshot-tests)
+    add_test(NAME snapshots COMMAND pocketkv-snapshot-tests)
+    set_tests_properties(snapshots PROPERTIES TIMEOUT 120)
+
     # The shim loads system headers before substituting Store calls, so fortified
     # inline libc wrappers cannot bypass the test hooks. Production is unchanged.
     add_library(pocketkv_fault_store OBJECT src/store.cpp)
@@ -73,6 +85,13 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME cli-workflows COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py $<TARGET_FILE:pocketkv>)
         set_tests_properties(cli-workflows PROPERTIES TIMEOUT 120)
+        add_executable(pocketkv-scenario-driver tests/scenario_driver.cpp)
+        target_link_libraries(pocketkv-scenario-driver PRIVATE PocketKV::pocketkv)
+        pocketkv_configure(pocketkv-scenario-driver)
+        add_test(NAME real-world-scenarios COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios_test.py
+            $<TARGET_FILE:pocketkv> $<TARGET_FILE:pocketkv-scenario-driver>)
+        set_tests_properties(real-world-scenarios PROPERTIES TIMEOUT 120)
         if(POCKETKV_BUILD_BENCHMARKS)
             add_test(NAME benchmark-accounting COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py $<TARGET_FILE:pocketkv-benchmark>)

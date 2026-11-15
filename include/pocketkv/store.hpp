@@ -38,10 +38,12 @@ struct Stats {
 // Exclusive advisory lock for this object's lifetime. The object is not
 // thread-safe: callers must serialize operations. Each mutation fsyncs its
 // append before updating the in-memory index or returning success.
+// Data operations reject inherited instances in forked child processes.
 class Store {
 public:
     static constexpr std::size_t max_key_bytes = 4096;
     static constexpr std::size_t max_value_bytes = 1024 * 1024;
+    static constexpr std::size_t max_page_keys = 1000;
 
     explicit Store(const std::filesystem::path& path, Options options = {});
     ~Store();
@@ -55,7 +57,17 @@ public:
     // No record is written if the key is absent.
     bool erase(std::string_view key);
     [[nodiscard]] std::vector<std::string> keys() const;
+    // Bytewise ordered prefix matches, strictly after the optional raw-key
+    // cursor. Empty prefix matches all keys; limit must be 1..max_page_keys.
+    // Pages are not snapshots: mutations between calls affect later results.
+    [[nodiscard]] std::vector<std::string> keys_page(
+        std::string_view prefix, std::size_t limit = 100,
+        std::optional<std::string_view> after = std::nullopt) const;
     [[nodiscard]] Stats stats() const;
+    // Write a compact, independently usable snapshot to a new path. Includes
+    // only live keys, validates each value, and never replaces a destination.
+    // Publication is atomic; success includes file and directory fsync.
+    void snapshot(const std::filesystem::path& destination) const;
     [[nodiscard]] std::uint64_t repaired_bytes() const noexcept;
 
 private:
