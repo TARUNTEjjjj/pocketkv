@@ -3,7 +3,8 @@
 PocketKV retains every old record but indexes only the current value of each key.
 This experiment asks whether reopening follows the historical log size while a
 lookup in an already-open Store stays comparatively stable. It also measures puts
-with the production `fsync`-per-mutation policy intact.
+with the production sync-per-mutation policy intact: `fsync`, or
+`fcntl(F_FULLFSYNC)` on macOS.
 
 ## Reproduce
 
@@ -39,7 +40,9 @@ runs a tiny correctness/accounting test; it does not impose a speed threshold.
   records superseded by a later put is `(r-1)/r`. Live value bytes stay `K*V`.
 - `put_batch_ms` times exactly `K` calls to `Store::put`. Values are prepared before
   timing. Database creation, the writer's initial reopen, destruction and CSV
-  output are excluded. Every put still calls `fsync`; no batching or bypass is used.
+  output are excluded. Every put still syncs its record (`fsync`, or
+  `fcntl(F_FULLFSYNC)` on macOS); no batching or bypass is used. The CSV
+  `sync_policy` value `fsync_per_put` names this one-sync-per-put policy.
 - `reopen_ms` times construction of a fresh Store after closing the writer. This
   includes open/lock, record validation and rebuilding the index, but excludes
   destruction and subsequent validation. It is **warm-cache reopening**: the file
@@ -92,6 +95,13 @@ rounds and five trials: [32 keys](benchmarks/keys-32.csv),
 | 128 | 2 | 256 | 23860 | 0.212 [0.203, 0.230] | 22.37 | 0.98 |
 | 128 | 4 | 512 | 47704 | 0.408 [0.398, 0.421] | 23.15 | 0.98 |
 | 128 | 8 | 1024 | 95392 | 0.781 [0.748, 0.844] | 21.71 | 0.98 |
+
+These measurements predate the switch to `fcntl(F_FULLFSYNC)` on macOS. Each
+put then used a plain `fsync`, which on macOS does not flush the drive's write
+cache, so the put column above omits that flush. With the current sync policy, a
+put on the same kind of machine costs a few milliseconds rather than about 23
+microseconds; re-run the commands above to measure it. The reopen and get columns
+involve no sync.
 
 For 128 live keys, eight times as many records produced about **6.1 times the
 median reopen time** while live values remained 8192 bytes. Median warm get time

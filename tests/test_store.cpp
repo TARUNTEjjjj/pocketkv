@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -15,6 +16,8 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -39,11 +42,11 @@ void require(bool condition, std::string_view description) {
 }
 
 template<class Function>
-void expect_error(ErrorCode code, Function function) {
+std::string expect_error(ErrorCode code, Function function) {
     ++assertions;
     try { function(); }
     catch (const Error& error) {
-        if (error.code() == code) return;
+        if (error.code() == code) return error.what();
         throw std::runtime_error("Wrong PocketKV error code: " + std::string(error.what()));
     }
     throw std::runtime_error("Expected PocketKV error was not thrown");
@@ -189,6 +192,15 @@ void codec_and_external_fixture() {
     require(pocketkv::detail::crc32({}) == 0, "CRC of empty payload");
     const auto generated = pocketkv::detail::make_file_header();
     require(Bytes(generated.begin(), generated.end()) == external_header(), "independent file-header encoding");
+    // Writers use the fields returned with an encoded header instead of decoding it again.
+    const auto encoded = pocketkv::detail::make_record_header(pocketkv::detail::Kind::put, "alpha", "new");
+    const auto independent = external_record(1, "alpha", "new");
+    require(Bytes(encoded.bytes.begin(), encoded.bytes.end()) == Bytes(independent.begin(), independent.begin() + 24),
+            "independent record-header encoding");
+    const auto decoded = pocketkv::detail::parse_record_header(encoded.bytes);
+    require(decoded.kind == encoded.fields.kind && decoded.key_size == encoded.fields.key_size &&
+                decoded.value_size == encoded.fields.value_size && decoded.payload_crc == encoded.fields.payload_crc,
+            "fields returned with an encoded record header match its decoding");
     Temp temp;
     auto fixture = external_header();
     append(fixture, external_record(1, "alpha", "old"));
@@ -381,6 +393,77 @@ void corruption_is_not_repair() {
     auto changed = original; changed.back() ^= 1;
     write(temp.path(), changed);
     expect_error(ErrorCode::corruption, [&] { (void)db.get("key"); });
+}
+
+void zero_filled_tail_recovery() {
+    Temp temp;
+    auto base = external_header();
+    append(base, external_record(1, "stable", "value"));
+    // The last complete record ends in zero bytes of its own, which repair must keep.
+    const std::string zeros(4, '\0');
+    append(base, external_record(1, "zeros", zeros));
+    const auto boundary = " at byte " + std::to_string(base.size());
+    // A crash can leave a file whose size covers an append that never reached
+    // the disk, and those blocks read back as zeros: shorter than a header, one
+    // header, one record, one file-system block.
+    for (const std::size_t length : {std::size_t(1), std::size_t(5), std::size_t(23), std::size_t(24),
+                                     std::size_t(38), std::size_t(4096)}) {
+        auto damaged = base;
+        damaged.resize(base.size() + length, 0);
+        write(temp.path(), damaged);
+        const auto message = expect_error(ErrorCode::incomplete_tail, [&] { Store db(temp.path(), {.create_if_missing=false}); });
+        require(message.find(boundary + " (only zero bytes)") != std::string::npos,
+                "a zero-filled tail is reported where the valid records end");
+        require(read(temp.path()) == damaged, "a normal open preserves a zero-filled tail");
+        {
+            Store db(temp.path(), {.create_if_missing=false, .repair_incomplete_tail=true});
+            require(db.repaired_bytes() == length, "repair discards exactly the zero-filled tail");
+            require(read(temp.path()) == base, "repair keeps every complete record, even one ending in zeros");
+            require(db.get("stable") == "value" && db.get("zeros") == zeros, "repair preserves earlier records");
+            db.put("after", "repair");
+        }
+        Store reopened(temp.path(), {.create_if_missing=false});
+        require(reopened.get("after") == "repair" && reopened.stats().record_count == 3,
+                "new appends work after a zero-filled tail is repaired");
+    }
+    auto empty = external_header();
+    empty.resize(empty.size() + 100, 0);
+    write(temp.path(), empty);
+    {
+        Store db(temp.path(), {.create_if_missing=false, .repair_incomplete_tail=true});
+        require(db.repaired_bytes() == 100 && db.keys().empty() && read(temp.path()) == external_header(),
+                "zeros after the file header repair to an empty database");
+    }
+
+    // Only bytes that cannot hold a record qualify. Anything else after the
+    // last complete record stays corruption, which repair refuses without
+    // changing the file; the error names the offset where the valid records end.
+    const auto next = external_record(1, "fresh", "new-value");
+    Bytes stale(40);
+    std::iota(stale.begin(), stale.end(), std::uint8_t{0x30});
+    Bytes stale_then_zeros{'o', 'l', 'd'};
+    stale_then_zeros.resize(100, 0);
+    Bytes short_zeros_then_data(5);
+    short_zeros_then_data.push_back(7);
+    Bytes zeros_then_data(40);
+    zeros_then_data.push_back(1);
+    Bytes zeros_then_record(24); // never skipped to reach the record
+    append(zeros_then_record, next);
+    Bytes header_then_zeros(next.begin(), next.begin() + 24);
+    header_then_zeros.resize(next.size(), 0);
+    for (const auto& tail : {stale, stale_then_zeros, short_zeros_then_data, zeros_then_data,
+                             zeros_then_record, header_then_zeros}) {
+        auto damaged = base;
+        append(damaged, tail);
+        for (const bool repair : {false, true}) {
+            write(temp.path(), damaged);
+            const auto message = expect_error(ErrorCode::corruption, [&] {
+                Store db(temp.path(), {.create_if_missing=false, .repair_incomplete_tail=repair});
+            });
+            require(message.ends_with(boundary), "corruption names the offset where the valid records end");
+            require(read(temp.path()) == damaged, "a tail that is not all zeros is never discarded");
+        }
+    }
 }
 
 void locking_and_process_exit() {
@@ -588,18 +671,122 @@ void short_write_poisoning() {
         } catch (...) { ::_exit(38); }
     }
     child_success(child);
-    const auto broken = read(temp.path());
-    expect_error(ErrorCode::incomplete_tail, [&] { Store db(temp.path(), {.create_if_missing=false}); });
-    require(read(temp.path()) == broken, "failed-write tail is preserved until explicit repair");
-    Store repaired(temp.path(), {.create_if_missing=false, .repair_incomplete_tail=true});
-    require(repaired.repaired_bytes() == 7, "short append discarded precisely");
-    require(repaired.get("before") == "safe" && !repaired.get("broken"), "previous acknowledged data survives failed write");
-    repaired.put("after", "works");
-    require(repaired.get("after") == "works", "repaired file accepts writes");
+    // The limit let 7 bytes of the record in before refusing the rest. The
+    // writer cut them off again, so no repair is needed before the next write.
+    auto acknowledged = external_header();
+    append(acknowledged, external_record(1, "before", "safe"));
+    require(read(temp.path()) == acknowledged, "a short append is cut back to the acknowledged records");
+    Store reopened(temp.path(), {.create_if_missing=false});
+    require(reopened.repaired_bytes() == 0 && reopened.get("before") == "safe" && !reopened.get("broken"),
+            "previous acknowledged data survives a failed write without repair");
+    reopened.put("after", "works");
+    require(reopened.get("after") == "works", "the reopened file accepts writes");
+}
+
+// fork() shares the open file description on which a Store holds its flock.
+// The lock must still end with the Store that took it, not with the last
+// forked copy, and a child destroying its inherited copy must not unlock it.
+void fork_does_not_extend_lock() {
+    Temp temp;
+    const auto transfer = [](int descriptor, bool send) {
+        char token = 't';
+        ssize_t result;
+        do {
+            result = send ? ::write(descriptor, &token, 1) : ::read(descriptor, &token, 1);
+        } while (result < 0 && errno == EINTR);
+        return result == 1;
+    };
+    {
+        std::optional<Store> owner(std::in_place, temp.path());
+        owner->put("shared", "parent");
+        Pipe release;
+        Pipe opened;
+        const auto child = ::fork();
+        if (child == 0) {
+            release.close_write();
+            opened.close_read();
+            // Keep the inherited copy, untouched, until the parent has reopened.
+            if (!transfer(release.descriptors[0], false)) ::_exit(70);
+            try {
+                Store fresh(temp.path(), {.create_if_missing=false});
+                if (fresh.get("shared") != "parent") ::_exit(71);
+                fresh.put("child", "fresh");
+            } catch (...) { ::_exit(72); }
+            ::_exit(transfer(opened.descriptors[1], true) ? 0 : 73);
+        }
+        require(child > 0, "fork succeeded");
+        release.close_read();
+        opened.close_write();
+        owner.reset();
+        {
+            Store reopened(temp.path(), {.create_if_missing=false});
+            require(reopened.get("shared") == "parent",
+                    "the owner's lock ends with its Store although a forked child holds the descriptor");
+        }
+        require(transfer(release.descriptors[1], true), "child is released");
+        require(transfer(opened.descriptors[0], false), "child opens a fresh Store while holding its inherited copy");
+        child_success(child);
+    }
+    {
+        std::optional<Store> owner(std::in_place, temp.path(), pocketkv::Options{.create_if_missing=false});
+        const auto child = ::fork();
+        if (child == 0) {
+            owner.reset(); // Destroying the inherited copy must leave the parent's lock alone.
+            ::_exit(0);
+        }
+        child_success(child);
+        expect_error(ErrorCode::locked, [&] { Store competing(temp.path()); });
+        owner->put("parent", "still-exclusive");
+    }
+    Store final(temp.path(), {.create_if_missing=false});
+    require(final.get("child") == "fresh" && final.get("parent") == "still-exclusive",
+            "both owners' acknowledged records persist");
+}
+
+// macOS opens /dev/fd/N as a duplicate of the caller's descriptor N, not as a
+// new open file description: it lacks O_APPEND, so appends land at the caller's
+// offset, and it shares the caller's lock. Linux exposes /dev/fd/N as a
+// symlink, which O_NOFOLLOW refuses. Either way nothing may be written.
+void descriptor_alias_is_rejected() {
+    Temp temp;
+    {
+        Store db(temp.path());
+        db.put("alpha", "first");
+    }
+    const auto before = read(temp.path());
+    for (const int mode : {O_RDWR, O_RDWR | O_APPEND | O_NONBLOCK}) {
+        const int caller = ::open(temp.path().c_str(), mode | O_CLOEXEC);
+        require(caller >= 0, "caller opens the database");
+        const auto alias = "/dev/fd/" + std::to_string(caller);
+        bool rejected = false;
+        try {
+            Store aliased(alias, {.create_if_missing=false});
+            aliased.put("gamma", "third");
+        } catch (const Error& error) {
+#if defined(__APPLE__)
+            rejected = error.code() == ErrorCode::invalid_argument;
+#else
+            (void)error;
+            rejected = true;
+#endif
+        }
+        bool fresh_opened = false;
+        try {
+            Store fresh(temp.path(), {.create_if_missing=false});
+            fresh_opened = fresh.get("alpha") == "first";
+        } catch (const Error&) {}
+        ::close(caller);
+        require(rejected, "a /dev/fd alias of the database is refused");
+        require(fresh_opened, "a refused alias leaves no lock on the caller's description");
+        require(read(temp.path()) == before, "a refused alias writes nothing to the database");
+    }
+    Store reopened(temp.path(), {.create_if_missing=false});
+    require(reopened.get("alpha") == "first" && !reopened.get("gamma") && reopened.stats().record_count == 1,
+            "the database keeps exactly its acknowledged record");
 }
 
 // A process may start with stdin, stdout or stderr closed, as a shell's `>&-`
-// does. open() and mkstemp() return the lowest free descriptor, so a Store must
+// does. open() and mkostemp() return the lowest free descriptor, so a Store must
 // never keep its database there: the program's own output would join the log.
 void closed_standard_descriptors() {
     for (const int closed : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) {
@@ -613,7 +800,7 @@ void closed_standard_descriptors() {
             try {
                 if (::close(closed) != 0) ::_exit(60);
                 {
-                    Store created(temp.path()); // A new database comes from mkstemp.
+                    Store created(temp.path()); // A new database comes from mkostemp.
                     if (!stray_write_fails()) ::_exit(61);
                     created.put("first", "one");
                 }
@@ -639,7 +826,7 @@ void closed_standard_descriptors() {
     }
 
     // With no descriptor slots above stderr, relocation must fail cleanly for
-    // both mkstemp (creation) and open (existing data). Only the child is limited.
+    // both mkostemp (creation) and open (existing data). Only the child is limited.
     for (const bool existing : {false, true}) {
         Temp temp;
         const auto path = temp.path();
@@ -681,11 +868,14 @@ int main() {
         {"every final-record truncation boundary", partial_tail_recovery},
         {"partial lengths must admit a valid completion", partial_length_validation},
         {"corruption is rejected without mutation", corruption_is_not_repair},
+        {"zero-filled tails repair; other tails stay corruption", zero_filled_tail_recovery},
         {"exclusive locking and abrupt process exit", locking_and_process_exit},
         {"inherited Store operations reject forked children", inherited_store_is_rejected},
         {"simultaneous first creation is atomic", simultaneous_first_creation},
-        {"short append poisons writer until reopen", short_write_poisoning},
+        {"short append is cut back and poisons writer until reopen", short_write_poisoning},
         {"closed standard descriptors never hold the database", closed_standard_descriptors},
+        {"a forked child neither keeps nor releases the owner's lock", fork_does_not_extend_lock},
+        {"descriptor aliases such as /dev/fd/N are refused", descriptor_alias_is_rejected},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

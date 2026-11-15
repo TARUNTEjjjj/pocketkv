@@ -30,9 +30,28 @@ execute_process(COMMAND "${cli}" "${database}" get-raw packaging
 if(NOT status EQUAL 0 OR NOT out STREQUAL "works" OR NOT err STREQUAL "")
     message(FATAL_ERROR "Relocated CLI persistence failed (${status}):\n${out}\n${err}")
 endif()
+# Configure the consumer the way the README tells users to. Given only a prefix,
+# find_package always searches <prefix>/lib/cmake/PocketKV, but other library
+# directories only on some platforms (Debian and Ubuntu skip lib64) or never
+# (tools/lib), so the README adds PocketKV_DIR for those.
+set(package_dir "${relocated_prefix}/${POCKET_LIBDIR}/cmake/PocketKV")
+set(discovery "-DCMAKE_PREFIX_PATH=${relocated_prefix}")
+if(NOT POCKET_LIBDIR STREQUAL "lib")
+    list(APPEND discovery "-DPocketKV_DIR=${package_dir}")
+endif()
 run_checked("${CMAKE_COMMAND}" -S "${POCKET_SOURCE_DIR}/tests/consumer" -B "${consumer_build}"
-    "-DCMAKE_PREFIX_PATH=${relocated_prefix}"
-    "-DPocketKV_DIR=${relocated_prefix}/${POCKET_LIBDIR}/cmake/PocketKV"
+    ${discovery}
     "-DCMAKE_CXX_COMPILER=${POCKET_COMPILER}" "-DCMAKE_BUILD_TYPE=${POCKET_CONFIG}")
+# The package must come from the moved installation, not from another PocketKV
+# that the search reached first.
+file(STRINGS "${consumer_build}/CMakeCache.txt" found REGEX "^PocketKV_DIR:[A-Z]+=")
+list(TRANSFORM found REPLACE "^PocketKV_DIR:[A-Z]+=" "")
+if(NOT found STREQUAL "")
+    file(REAL_PATH "${found}" found)
+endif()
+file(REAL_PATH "${package_dir}" expected)
+if(NOT found STREQUAL expected)
+    message(FATAL_ERROR "Consumer used PocketKV from '${found}', not the moved installation '${expected}'")
+endif()
 run_checked("${CMAKE_COMMAND}" --build "${consumer_build}" ${config_args})
 run_checked("${CMAKE_CTEST_COMMAND}" --test-dir "${consumer_build}" ${ctest_config_args} --output-on-failure)

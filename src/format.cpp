@@ -139,7 +139,7 @@ void validate_file_header(const std::span<const std::uint8_t> bytes) {
     }
 }
 
-std::array<std::uint8_t, record_header_size> make_record_header(
+EncodedRecordHeader make_record_header(
     const Kind kind, const std::string_view key, const std::string_view value) {
     if (kind != Kind::put && kind != Kind::erase) {
         throw Error(ErrorCode::invalid_argument, "invalid record operation");
@@ -150,14 +150,16 @@ std::array<std::uint8_t, record_header_size> make_record_header(
     if (value.size() > Store::max_value_bytes || (kind == Kind::erase && !value.empty())) {
         throw Error(ErrorCode::invalid_argument, "value is too large or invalid for a delete record");
     }
+    const RecordHeader fields{kind, static_cast<std::uint32_t>(key.size()),
+                              static_cast<std::uint32_t>(value.size()), payload_crc(key, value)};
     std::array<std::uint8_t, record_header_size> bytes{};
     std::copy(record_magic.begin(), record_magic.end(), bytes.begin());
     bytes[4] = static_cast<std::uint8_t>(kind);
-    write_u32(bytes, 8, static_cast<std::uint32_t>(key.size()));
-    write_u32(bytes, 12, static_cast<std::uint32_t>(value.size()));
-    write_u32(bytes, 16, payload_crc(key, value));
+    write_u32(bytes, 8, fields.key_size);
+    write_u32(bytes, 12, fields.value_size);
+    write_u32(bytes, 16, fields.payload_crc);
     write_u32(bytes, 20, crc32(std::span<const std::uint8_t>(bytes).first(20)));
-    return bytes;
+    return {bytes, fields};
 }
 
 RecordHeader parse_record_header(const std::span<const std::uint8_t> bytes) {

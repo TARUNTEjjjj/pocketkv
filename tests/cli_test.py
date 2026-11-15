@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import select
 import struct
 import subprocess
 import tempfile
@@ -15,6 +16,8 @@ import zlib
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
+    parser.add_argument("--allocation-limited", type=Path,
+                        help="test build of the CLI whose allocations above POCKETKV_TEST_ALLOCATION_LIMIT bytes fail")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     checks = 0
@@ -51,6 +54,49 @@ def main() -> None:
         error = b"error: could not write command output\n" if descriptor == 1 else b""
         check(result.returncode == code and result.stdout == b"" and result.stderr == error,
               f"closed descriptor {descriptor} contract failed: {arguments!r}; {result}")
+
+    def aliased(database: str, *arguments: str) -> subprocess.CompletedProcess:
+        # Pass the database as /dev/fd/N of a read/write descriptor, as
+        # `pocketkv /dev/fd/3 put ... 3<>db` does. macOS opens that path as a
+        # duplicate of descriptor N, without O_APPEND or a lock of its own.
+        descriptor = os.open(database, os.O_RDWR)
+        try:
+            return subprocess.run([str(binary), f"/dev/fd/{descriptor}", *arguments], capture_output=True,
+                                  timeout=10, check=False, pass_fds=(descriptor,))
+        finally:
+            os.close(descriptor)
+
+    def unread_output(database: str, *arguments: str) -> bytes:
+        # Nobody reads this command's output yet, and it is larger than a pipe
+        # holds, so the command blocks while printing, as under a pager. By its
+        # first output byte it must have closed its Store and released the lock.
+        reader = subprocess.Popen([str(binary), database, *arguments],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            ready, _, _ = select.select([reader.stdout], [], [], 10)
+            first = os.read(reader.stdout.fileno(), 1) if ready else b""
+            check(first != b"", f"blocked reader started its output: {arguments!r}")
+            writer = subprocess.run([str(binary), database, "put", "concurrent", "writer"],
+                                    capture_output=True, timeout=10, check=False)
+            check(writer.returncode == 0 and writer.stdout == b"Saved.\n",
+                  f"a reader blocked on its output must not hold the lock: {arguments!r}; {writer}")
+        finally:
+            try:
+                rest, errors = reader.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                reader.kill()
+                rest, errors = reader.communicate()
+        check(reader.returncode == 0 and errors == b"", f"blocked reader finished: {arguments!r}; {errors!r}")
+        return first + rest
+
+    def encode(records: list[tuple[int, bytes, bytes]]) -> bytes:
+        """Independent encoder for fixtures too large for a command line."""
+        header = struct.pack("<8sI", b"POCKETKV", 1)
+        parts = [header, struct.pack("<I", zlib.crc32(header))]
+        for kind, key, value in records:
+            record = struct.pack("<4sBBHIII", b"PKVR", kind, 0, 0, len(key), len(value), zlib.crc32(key + value))
+            parts += [record, struct.pack("<I", zlib.crc32(record)), key, value]
+        return b"".join(parts)
 
     def decode(data: bytes) -> list[tuple[int, bytes, bytes]]:
         """Independent little-endian decoder using Python's standard CRC32."""
@@ -173,6 +219,33 @@ def main() -> None:
         result = run(database, "repair", code=2)
         check(bool(result.stderr) and Path(database).read_bytes() == corrupt, "repair refuses complete corruption without mutation")
 
+        # A crash can leave the file longer than its last acknowledged record,
+        # with space that was never written reading back as zeros. Only zeros
+        # hold no record, so repair discards them; any other tail is corruption,
+        # reported with the offset where the valid records end.
+        zero_database = str(root / "zero-tail.db")
+        run(zero_database, "put", "alpha", "acknowledged-1", output=b"Saved.\n")
+        run(zero_database, "put", "beta", "acknowledged-2", output=b"Saved.\n")
+        acknowledged = Path(zero_database).read_bytes()
+        end = len(acknowledged)
+        for length in (5, 24, 4096):
+            Path(zero_database).write_bytes(acknowledged + bytes(length))
+            result = run(zero_database, "verify", code=2)
+            check(f"at byte {end} (only zero bytes)".encode() in result.stderr and
+                  b"Run the explicit repair command" in result.stderr,
+                  f"a zero-filled tail asks for repair: {result.stderr!r}")
+            check(Path(zero_database).read_bytes() == acknowledged + bytes(length), "verify preserves a zero-filled tail")
+            run(zero_database, "repair", output=f"Repaired {length} bytes.\n".encode())
+            check(Path(zero_database).read_bytes() == acknowledged, "repair cuts exactly at the last acknowledged record")
+            run(zero_database, "get", "beta", output=b"acknowledged-2\n")
+        for tail in (bytes(range(0x30, 0x58)), bytes(24) + b"\x01", b"PKVR" + bytes(40)):
+            Path(zero_database).write_bytes(acknowledged + tail)
+            for command in ("verify", "repair"):
+                result = run(zero_database, command, code=2)
+                check(result.stderr.startswith(b"error: ") and result.stderr.endswith(f" at byte {end}\n".encode()),
+                      f"corruption names where the valid records end: {command}; {result.stderr!r}")
+                check(Path(zero_database).read_bytes() == acknowledged + tail, "repair refuses a tail that is not all zeros")
+
         escaped = str(root / "escaped.db")
         for key in ["line\nbreak", "path\\key", "tab\tkey", "\u00e9"]:
             run(escaped, "put", key, "value", output=b"Saved.\n")
@@ -253,6 +326,65 @@ def main() -> None:
         check(not Path(absent_source).exists(), "snapshot never creates a missing source")
         failed_output(snapshot_source, "snapshot", str(root / "unacknowledged.db"))
         run(str(root / "unacknowledged.db"), "get", "kept", output=b"latest\n")
+
+        # A /dev/fd/N alias is refused before anything is written: on macOS it
+        # would append at the caller's offset (over the file header) and share
+        # the caller's lock; Linux refuses the /proc symlink through O_NOFOLLOW.
+        alias_database = str(root / "alias.db")
+        run(alias_database, "put", "alpha", "first", output=b"Saved.\n")
+        before = Path(alias_database).read_bytes()
+        alias_copy = root / "alias-copy.db"
+        for arguments in [("put", "gamma", "third"), ("delete", "alpha"), ("get", "alpha"), ("verify",),
+                          ("keys-prefix", ""), ("snapshot", str(alias_copy))]:
+            result = aliased(alias_database, *arguments)
+            check(result.returncode == 2 and result.stdout == b"" and bool(result.stderr),
+                  f"descriptor alias must be refused: {arguments!r}; {result}")
+            check(Path(alias_database).read_bytes() == before, "a refused descriptor alias never changes the database")
+        check(not alias_copy.exists(), "a refused descriptor alias is never copied to a snapshot")
+        run(alias_database, "get", "alpha", output=b"first\n")
+
+        # Commands close the database before printing, so output that nobody
+        # reads yet (a pager, a slow pipe) never locks other commands out.
+        listing_database = str(root / "long-listing.db")
+        listed = [f"listed-{index:04}-".encode().ljust(64, b"k") for index in range(4096)]
+        Path(listing_database).write_bytes(encode([(1, key, b"") for key in listed]))
+        check(unread_output(listing_database, "keys") == b"".join(key + b"\n" for key in listed),
+              "a keys listing that blocked is complete")
+        value_database = str(root / "large-value.db")
+        large_value = bytes(range(256)) * 4096
+        Path(value_database).write_bytes(encode([(1, b"large", large_value)]))
+        check(unread_output(value_database, "get-raw", "large") == large_value, "a get-raw that blocked is complete")
+        page_database = str(root / "long-page.db")
+        paged_keys = [f"paged-{index:04}-".encode().ljust(1024, b"k") for index in range(1000)]
+        Path(page_database).write_bytes(encode([(1, key, b"") for key in paged_keys]))
+        check(unread_output(page_database, "keys-prefix", "paged-", "1000") == b"".join(key + b"\n" for key in paged_keys),
+              "a keys-prefix page that blocked is complete")
+        for blocked in [listing_database, value_database, page_database]:
+            run(blocked, "get", "concurrent", output=b"writer\n")
+
+        # Running out of memory is reported like any other output failure: a
+        # command prints its whole output and exits 0, or exits 2 with an error.
+        # A test build of the CLI fails every allocation above a limit; the
+        # limits span each output's size, from too little to run at all to plenty.
+        if args.allocation_limited is not None:
+            limited = args.allocation_limited.resolve(strict=True)
+            for arguments in [(listing_database, "keys"), (value_database, "get-raw", "large")]:
+                expected = run(*arguments).stdout
+                outcomes = set()
+                for percent in (25, 50, 75, 100, 125, 150, 200, 300):
+                    limit = len(expected) * percent // 100
+                    result = subprocess.run([str(limited), *arguments], capture_output=True, timeout=10, check=False,
+                                            env=dict(os.environ, POCKETKV_TEST_ALLOCATION_LIMIT=str(limit)))
+                    outcomes.add(result.returncode)
+                    if result.returncode == 0:
+                        check(result.stdout == expected and result.stderr == b"",
+                              f"exit 0 under an allocation limit means complete output: {arguments[1:]!r}, "
+                              f"limit {limit}; printed {len(result.stdout)} of {len(expected)} bytes")
+                    else:
+                        check(result.returncode == 2 and result.stderr.startswith(b"error: "),
+                              f"running out of memory is reported: {arguments[1:]!r}, limit {limit}; "
+                              f"exit={result.returncode}; stderr={result.stderr!r}")
+                check(outcomes == {0, 2}, f"the allocation limits both stop and permit {arguments[1:]!r}: {outcomes}")
     print(f"PASS {checks} CLI and independent format checks, including argument validation, output failures and recovery")
 
 
