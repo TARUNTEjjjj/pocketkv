@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "pocketkv",
   "title": "PocketKV storage references",
-  "fetchedAt": "2026-11-15T11:29:42.074Z",
-  "attemptedAt": "2026-11-15T11:29:27.470Z",
+  "fetchedAt": "2026-11-16T12:03:03.616Z",
+  "attemptedAt": "2026-11-16T12:02:49.105Z",
   "status": "live",
   "errors": [],
   "excludedSeeds": [],
@@ -26,17 +26,17 @@
       "url": "https://github.com/google/leveldb",
       "description": "LevelDB is a fast key-value storage library written at Google that provides an ordered mapping from string keys to string values.",
       "topics": [],
-      "stars": 39545,
-      "forks": 8249,
+      "stars": 39549,
+      "forks": 8251,
       "pushedAt": "2026-11-12T20:07:07.000Z",
       "license": "BSD-3-Clause",
       "category": "storage",
       "sourceQuery": "repo:google/leveldb",
-      "fetchedAt": "2026-11-15T11:29:31.243Z",
+      "fetchedAt": "2026-11-16T12:02:52.503Z",
       "provenance": "github",
       "stale": false,
-      "score": 62.91,
-      "reason": "Storage engines resource; 39545 GitHub stars."
+      "score": 62.89,
+      "reason": "Storage engines resource; 39549 GitHub stars."
     },
     {
       "id": 6934395,
@@ -47,17 +47,17 @@
         "database",
         "storage-engine"
       ],
-      "stars": 32276,
-      "forks": 7029,
+      "stars": 32281,
+      "forks": 7030,
       "pushedAt": "2026-11-14T01:39:54.000Z",
       "license": "GPL-2.0",
       "category": "storage",
       "sourceQuery": "repo:meta/rocksdb",
-      "fetchedAt": "2026-11-15T11:29:33.615Z",
+      "fetchedAt": "2026-11-16T12:02:54.927Z",
       "provenance": "github",
       "stale": false,
-      "score": 62.51,
-      "reason": "Storage engines resource; 32276 GitHub stars."
+      "score": 62.48,
+      "reason": "Storage engines resource; 32281 GitHub stars."
     },
     {
       "id": 581630327,
@@ -74,17 +74,17 @@
         "storage",
         "tutorial"
       ],
-      "stars": 4216,
+      "stars": 4218,
       "forks": 663,
       "pushedAt": "2026-11-07T08:36:39.000Z",
       "license": "Apache-2.0",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 57.91,
-      "reason": "Storage engines resource; 4216 GitHub stars."
+      "score": 57.88,
+      "reason": "Storage engines resource; 4218 GitHub stars."
     },
     {
       "id": 31040213,
@@ -107,10 +107,10 @@
       "license": "Apache-2.0",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 56.96,
+      "score": 56.94,
       "reason": "Storage engines resource; 3993 GitHub stars."
     },
     {
@@ -140,17 +140,17 @@
         "rust-lang",
         "storage-engine"
       ],
-      "stars": 2445,
+      "stars": 2449,
       "forks": 145,
       "pushedAt": "2026-11-11T20:18:30.000Z",
       "license": "Apache-2.0",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 56.84,
-      "reason": "Storage engines resource; 2445 GitHub stars."
+      "score": 56.82,
+      "reason": "Storage engines resource; 2449 GitHub stars."
     },
     {
       "id": 531220682,
@@ -173,10 +173,10 @@
       "license": null,
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 56.55,
+      "score": 56.54,
       "reason": "Storage engines resource; 10776 GitHub stars."
     },
     {
@@ -198,14 +198,14 @@
       ],
       "stars": 1361,
       "forks": 661,
-      "pushedAt": "2026-11-14T00:19:18.000Z",
+      "pushedAt": "2026-11-16T11:54:24.000Z",
       "license": "Apache-2.0",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 55.63,
+      "score": 55.67,
       "reason": "Storage engines resource; 1361 GitHub stars."
     },
     {
@@ -228,10 +228,10 @@
       "license": null,
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 54.11,
+      "score": 54.08,
       "reason": "Storage engines resource; 683 GitHub stars."
     },
     {
@@ -263,14 +263,14 @@
       ],
       "stars": 649,
       "forks": 35,
-      "pushedAt": "2026-11-10T19:35:57.000Z",
+      "pushedAt": "2026-11-16T01:33:50.000Z",
       "license": "Apache-2.0",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 53.94,
+      "score": 54.05,
       "reason": "Storage engines resource; 649 GitHub stars."
     },
     {
@@ -302,11 +302,11 @@
       ],
       "stars": 506,
       "forks": 41,
-      "pushedAt": "2026-11-15T10:14:11.000Z",
+      "pushedAt": "2026-11-16T09:55:27.000Z",
       "license": "MIT",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
       "score": 53.52,
@@ -336,10 +336,10 @@
       "license": "MIT",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 51.31,
+      "score": 51.3,
       "reason": "Storage engines resource; 3056 GitHub stars."
     },
     {
@@ -375,10 +375,10 @@
       "license": "MPL-2.0",
       "category": "storage",
       "sourceQuery": "topic:key-value-store",
-      "fetchedAt": "2026-11-15T11:29:28.827Z",
+      "fetchedAt": "2026-11-16T12:02:50.151Z",
       "provenance": "github",
       "stale": false,
-      "score": 49.63,
+      "score": 49.62,
       "reason": "Storage engines resource; 830 GitHub stars."
     },
     {
@@ -408,17 +408,17 @@
         "vector-databases",
         "vector-search"
       ],
-      "stars": 77528,
-      "forks": 25060,
-      "pushedAt": "2026-11-14T12:04:08.000Z",
+      "stars": 77520,
+      "forks": 25052,
+      "pushedAt": "2026-11-15T15:15:18.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "repo:redis/redis",
-      "fetchedAt": "2026-11-15T11:29:42.074Z",
+      "fetchedAt": "2026-11-16T12:03:03.616Z",
       "provenance": "github",
       "stale": false,
       "score": 74.42,
-      "reason": "Database internals resource; 77528 GitHub stars."
+      "reason": "Database internals resource; 77520 GitHub stars."
     },
     {
       "id": 19816070,
@@ -442,17 +442,17 @@
         "storage-engine",
         "vector-database"
       ],
-      "stars": 8590,
+      "stars": 8597,
       "forks": 2281,
-      "pushedAt": "2026-11-15T10:12:09.000Z",
+      "pushedAt": "2026-11-16T11:56:43.000Z",
       "license": "GPL-2.0",
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
       "score": 69.67,
-      "reason": "Database internals resource; 8590 GitHub stars."
+      "reason": "Database internals resource; 8597 GitHub stars."
     },
     {
       "id": 54005538,
@@ -471,14 +471,14 @@
       ],
       "stars": 1484,
       "forks": 277,
-      "pushedAt": "2026-11-14T10:36:44.000Z",
+      "pushedAt": "2026-11-16T11:56:49.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 65.83,
+      "score": 65.86,
       "reason": "Database internals resource; 1484 GitHub stars."
     },
     {
@@ -504,10 +504,10 @@
       "license": "MIT",
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 63.95,
+      "score": 63.92,
       "reason": "Database internals resource; 660 GitHub stars."
     },
     {
@@ -534,17 +534,17 @@
         "self-hosted",
         "sql"
       ],
-      "stars": 50932,
-      "forks": 9263,
-      "pushedAt": "2026-11-15T11:29:13.000Z",
+      "stars": 50956,
+      "forks": 9270,
+      "pushedAt": "2026-11-16T11:57:53.000Z",
       "license": "Apache-2.0",
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 53.53,
-      "reason": "Database internals resource; 50932 GitHub stars."
+      "score": 53.54,
+      "reason": "Database internals resource; 50956 GitHub stars."
     },
     {
       "id": 138754790,
@@ -558,38 +558,17 @@
         "olap",
         "sql"
       ],
-      "stars": 43079,
-      "forks": 4204,
-      "pushedAt": "2026-11-13T20:45:13.000Z",
+      "stars": 43101,
+      "forks": 4208,
+      "pushedAt": "2026-11-16T11:52:01.000Z",
       "license": "MIT",
       "category": "databases",
       "sourceQuery": "repo:duckdb/duckdb",
-      "fetchedAt": "2026-11-15T11:29:39.569Z",
+      "fetchedAt": "2026-11-16T12:03:01.261Z",
       "provenance": "github",
       "stale": false,
-      "score": 53.13,
-      "reason": "Database internals resource; 43079 GitHub stars."
-    },
-    {
-      "id": 6934395,
-      "fullName": "meta/rocksdb",
-      "url": "https://github.com/meta/rocksdb",
-      "description": "A library that provides an embeddable, persistent key-value store for fast storage.",
-      "topics": [
-        "database",
-        "storage-engine"
-      ],
-      "stars": 32276,
-      "forks": 7029,
-      "pushedAt": "2026-11-14T01:39:54.000Z",
-      "license": "GPL-2.0",
-      "category": "databases",
-      "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
-      "provenance": "github",
-      "stale": false,
-      "score": 52.51,
-      "reason": "Database internals resource; 32276 GitHub stars."
+      "score": 53.17,
+      "reason": "Database internals resource; 43101 GitHub stars."
     },
     {
       "id": 437245741,
@@ -613,17 +592,38 @@
         "valkey",
         "vector-search"
       ],
-      "stars": 31875,
+      "stars": 31877,
       "forks": 1294,
-      "pushedAt": "2026-11-15T09:20:08.000Z",
+      "pushedAt": "2026-11-16T11:56:25.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 52.51,
-      "reason": "Database internals resource; 31875 GitHub stars."
+      "score": 52.52,
+      "reason": "Database internals resource; 31877 GitHub stars."
+    },
+    {
+      "id": 6934395,
+      "fullName": "meta/rocksdb",
+      "url": "https://github.com/meta/rocksdb",
+      "description": "A library that provides an embeddable, persistent key-value store for fast storage.",
+      "topics": [
+        "database",
+        "storage-engine"
+      ],
+      "stars": 32281,
+      "forks": 7030,
+      "pushedAt": "2026-11-14T01:39:54.000Z",
+      "license": "GPL-2.0",
+      "category": "databases",
+      "sourceQuery": "topic:database language:C++",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
+      "provenance": "github",
+      "stale": false,
+      "score": 52.48,
+      "reason": "Database internals resource; 32281 GitHub stars."
     },
     {
       "id": 108110,
@@ -638,14 +638,14 @@
       ],
       "stars": 28681,
       "forks": 5915,
-      "pushedAt": "2026-11-14T05:50:05.000Z",
+      "pushedAt": "2026-11-16T11:13:38.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 52.25,
+      "score": 52.29,
       "reason": "Database internals resource; 28681 GitHub stars."
     },
     {
@@ -662,17 +662,17 @@
         "sqlite",
         "sqlitebrowser"
       ],
-      "stars": 24790,
+      "stars": 24797,
       "forks": 2381,
       "pushedAt": "2026-11-15T00:36:14.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 51.96,
-      "reason": "Database internals resource; 24790 GitHub stars."
+      "score": 51.93,
+      "reason": "Database internals resource; 24797 GitHub stars."
     },
     {
       "id": 120887835,
@@ -694,17 +694,17 @@
         "operating-system",
         "stl"
       ],
-      "stars": 38313,
+      "stars": 38316,
       "forks": 8056,
       "pushedAt": "2026-09-17T07:18:55.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
-      "score": 51.52,
-      "reason": "Database internals resource; 38313 GitHub stars."
+      "score": 51.5,
+      "reason": "Database internals resource; 38316 GitHub stars."
     },
     {
       "id": 28449431,
@@ -720,17 +720,17 @@
         "scylla",
         "seastar"
       ],
-      "stars": 15835,
+      "stars": 15834,
       "forks": 1535,
-      "pushedAt": "2026-11-15T10:14:44.000Z",
+      "pushedAt": "2026-11-16T12:02:00.000Z",
       "license": null,
       "category": "databases",
       "sourceQuery": "topic:database language:C++",
-      "fetchedAt": "2026-11-15T11:29:37.197Z",
+      "fetchedAt": "2026-11-16T12:02:58.911Z",
       "provenance": "github",
       "stale": false,
       "score": 51,
-      "reason": "Database internals resource; 15835 GitHub stars."
+      "reason": "Database internals resource; 15834 GitHub stars."
     }
   ]
 }
