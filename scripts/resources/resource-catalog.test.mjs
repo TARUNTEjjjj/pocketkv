@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateConfig, normalizeRepository, rankResources, createSeedSnapshot, refreshCatalog, readCatalog, queryCatalog } from './resource-catalog.mjs';
 import { createResourceServer } from './resource-server.mjs';
 
@@ -163,6 +164,27 @@ test('refresh CLI persists a partial catalog and returns the distinct partial-su
   assert.equal(snapshot.items[0].stars, 10000);
   assert.equal(snapshot.items[0].fetchedAt, NOW);
   assert.equal(snapshot.errors.length, 1);
+});
+
+test('CLI runs the same command through a symlink, keeps failure status, and does not start on import', async (t) => {
+  const { directory } = await fixture(t);
+  const script = fileURLToPath(new URL('./resource-server.mjs', import.meta.url));
+  const link = join(directory, 'resources.mjs');
+  await symlink(script, link);
+  const run = (...args) => spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 5000 });
+  const direct = run(script, 'help');
+  const linked = run(link, 'help');
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.match(direct.stdout, /^Usage:/);
+  assert.equal(linked.status, 0, linked.stderr);
+  assert.equal(linked.stdout, direct.stdout);
+  const invalid = run(link, 'not-a-command');
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /Choose seed, refresh, or serve/);
+  // Importing the module (here with no argv[1] at all) must not run the CLI.
+  const imported = run('--input-type=module', '--eval', `await import(${JSON.stringify(pathToFileURL(link).href)});`);
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout, '');
 });
 
 test('rate limits stop further requests and persist cooldown across refreshes', async (t) => {
