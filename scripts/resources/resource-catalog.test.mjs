@@ -150,6 +150,43 @@ test('source failure preserves its last good data and original timestamp', async
   assert.match(snapshot.errors[0].message, /503/);
 });
 
+test('overlapping source memberships survive a partial refresh without the transport cache', async (t) => {
+  const overlapping = { ...config, categories: [{ id: 'storage', title: 'Storage', queries: ['topic:key-value-store', 'topic:database'], seeds: [] }] };
+  const store = raw({ id: 77, full_name: 'example/store', html_url: 'https://github.com/example/store', description: 'Key-value store', topics: ['key-value-store', 'database'] });
+  const isSecond = (url) => decodeURIComponent(url).includes('topic:database');
+  const run = async (retainSidecar) => {
+    const { snapshotPath } = await fixture(t);
+    const initial = await refreshCatalog(overlapping, options({ snapshotPath, fetchImpl: async () => searchResponse([store]) }));
+    assert.deepEqual(initial.items.map((item) => [item.fullName, item.sourceQueries]), [['example/store', ['topic:key-value-store', 'topic:database']]]);
+    if (!retainSidecar) await rm(`${snapshotPath}.cache.json`);
+    return refreshCatalog(overlapping, options({ snapshotPath, now: LATER, fetchImpl: async (url) => isSecond(url) ? new Response('unavailable', { status: 503 }) : searchResponse([]) }));
+  };
+  for (const retainSidecar of [true, false]) {
+    const snapshot = await run(retainSidecar);
+    assert.deepEqual(snapshot.items.map((item) => [item.fullName, item.stale, item.fetchedAt, item.sourceQueries]), [['example/store', true, NOW, ['topic:database']]], `sidecar retained: ${retainSidecar}`);
+    assert.deepEqual(snapshot.errors, [{ source: 'storage: topic:database', message: 'GitHub returned HTTP 503; the previous source data was preserved.' }]);
+  }
+});
+
+test('public snapshots written before sourceQueries still restore their single membership', async (t) => {
+  const { snapshotPath } = await fixture(t);
+  const queryOnly = { ...config, categories: [{ ...config.categories[0], seeds: [] }] };
+  await refreshCatalog(queryOnly, options({ snapshotPath, fetchImpl: successfulFetch }));
+  const legacy = JSON.parse(await readFile(snapshotPath, 'utf8'));
+  for (const item of legacy.items) delete item.sourceQueries;
+  await writeFile(snapshotPath, JSON.stringify(legacy));
+  await rm(`${snapshotPath}.cache.json`);
+  const snapshot = await refreshCatalog(queryOnly, options({ snapshotPath, now: LATER, fetchImpl: async () => new Response('bad', { status: 503 }) }));
+  assert.deepEqual(snapshot.items.map((item) => [item.fullName, item.fetchedAt, item.sourceQueries]), [['sympy/sympy', NOW, ['topic:mathematics']]]);
+});
+
+test('failures without previous source data do not claim it was preserved', async (t) => {
+  const { snapshotPath } = await fixture(t);
+  const snapshot = await refreshCatalog(config, options({ snapshotPath, fetchImpl: async () => new Response('bad', { status: 503 }) }));
+  assert.equal(snapshot.errors.length, 2);
+  for (const error of snapshot.errors) assert.equal(error.message, 'GitHub returned HTTP 503; no previous source data was available.');
+});
+
 test('refresh CLI persists a partial catalog and returns the distinct partial-success exit code', async (t) => {
   const { snapshotPath, directory } = await fixture(t);
   const queryOnly = { ...config, categories: [{ ...config.categories[0], seeds: [] }] };
