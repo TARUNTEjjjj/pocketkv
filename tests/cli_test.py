@@ -385,6 +385,28 @@ def main() -> None:
                               f"running out of memory is reported: {arguments[1:]!r}, limit {limit}; "
                               f"exit={result.returncode}; stderr={result.stderr!r}")
                 check(outcomes == {0, 2}, f"the allocation limits both stop and permit {arguments[1:]!r}: {outcomes}")
+
+        # Verify --json output across commands and forensic inspect telemetry
+        import json as _json
+        json_db = str(root / "json-mode.db")
+        res = run("--json", json_db, "init")
+        check(_json.loads(res.stdout)["command"] == "init" and _json.loads(res.stdout)["ok"] is True, "--json init")
+        res = run("--json", json_db, "put", "alpha", "hello")
+        check(_json.loads(res.stdout)["bytes"] == 5, "--json put")
+        run("--json", json_db, "put", "alpha", "hello-v2")
+        run("--json", json_db, "put", "beta", "B" * 2000)
+        run("--json", json_db, "delete", "alpha")
+        res = run("--json", json_db, "get", "beta")
+        got_j = _json.loads(res.stdout)
+        check(got_j["found"] is True and got_j["bytes"] == 2000, "--json get")
+        miss_j = run("--json", json_db, "get", "missing", code=1)
+        check(_json.loads(miss_j.stdout)["found"] is False, "--json missing exits 1")
+        insp = run(json_db, "inspect", "--json")
+        insp_j = _json.loads(insp.stdout)
+        check(insp_j["live_keys"] == 1 and insp_j["put_records"] == 3 and
+              insp_j["superseded_records"] == 2 and
+              insp_j["erase_records"] == 1 and insp_j["reclaimable_bytes"] > 0 and
+              insp_j["value_histogram"]["gt_1024"] == 1, f"inspect json mismatch: {insp_j}")
     print(f"PASS {checks} CLI and independent format checks, including argument validation, output failures and recovery")
 
 
