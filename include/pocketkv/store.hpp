@@ -35,6 +35,30 @@ struct Stats {
     std::uint64_t live_value_bytes;
 };
 
+struct InspectionReport {
+    std::uint64_t file_bytes = 0;
+    std::uint64_t header_bytes = 0;
+    std::uint64_t record_count = 0;
+    std::uint64_t put_records = 0;
+    std::uint64_t erase_records = 0;
+    std::uint64_t live_keys = 0;
+    std::uint64_t superseded_records = 0;
+    std::uint64_t live_key_bytes = 0;
+    std::uint64_t live_value_bytes = 0;
+    std::uint64_t live_record_bytes = 0;
+    std::uint64_t reclaimable_bytes = 0;
+    double space_amplification = 1.0;
+    std::uint32_t min_key_bytes = 0;
+    std::uint32_t max_key_bytes = 0;
+    std::uint32_t min_value_bytes = 0;
+    std::uint32_t max_value_bytes = 0;
+    std::uint64_t values_le_64 = 0;
+    std::uint64_t values_le_1024 = 0;
+    std::uint64_t values_gt_1024 = 0;
+    std::string largest_key;
+    std::uint32_t largest_value_bytes = 0;
+};
+
 // Exclusive advisory lock for this object's lifetime. The object is not
 // thread-safe: callers must serialize operations. Each mutation syncs its
 // append (fsync; fcntl(F_FULLFSYNC) on macOS) before updating the in-memory
@@ -71,6 +95,7 @@ public:
         std::string_view prefix, std::size_t limit = 100,
         std::optional<std::string_view> after = std::nullopt) const;
     [[nodiscard]] Stats stats() const;
+    [[nodiscard]] InspectionReport inspect() const;
     // Write a compact, independently usable snapshot to a new path. Includes
     // only live keys, validates each value, and never replaces a destination.
     // Publication is atomic; success includes file and directory sync.

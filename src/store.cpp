@@ -507,12 +507,14 @@ struct Store::Impl {
             const bool present = slot != index.end() && slot->first == key;
             if (present) live_value_bytes -= slot->second.value_size;
             if (header.kind == detail::Kind::put) {
+                ++put_records;
                 const Entry entry{position, header.key_size, header.value_size, header.payload_crc};
                 if (present) slot->second = entry;
                 else index.emplace_hint(slot, std::string(key), entry);
                 live_value_bytes += header.value_size;
-            } else if (present) {
-                index.erase(slot);
+            } else {
+                ++erase_records;
+                if (present) index.erase(slot);
             }
             ++record_count;
             position += record_size;
@@ -572,6 +574,8 @@ struct Store::Impl {
     FileDescriptor fd;
     Index index;
     std::uint64_t record_count = 0;
+    std::uint64_t put_records = 0;
+    std::uint64_t erase_records = 0;
     std::uint64_t file_bytes = 0;
     std::uint64_t live_value_bytes = 0;
     std::uint64_t repaired = 0;
@@ -606,6 +610,7 @@ void Store::put(std::string_view key, std::string_view value) {
     }
     impl_->file_bytes += detail::record_header_size + key.size() + value.size();
     ++impl_->record_count;
+    ++impl_->put_records;
     impl_->live_value_bytes = impl_->live_value_bytes - previous_size + value.size();
 }
 
@@ -641,6 +646,7 @@ bool Store::erase(std::string_view key) {
     impl_->index.erase(found);
     impl_->file_bytes += detail::record_header_size + key.size();
     ++impl_->record_count;
+    ++impl_->erase_records;
     impl_->live_value_bytes -= previous_size;
     return true;
 }
@@ -678,6 +684,47 @@ Stats Store::stats() const {
     impl_->healthy();
     return {static_cast<std::uint64_t>(impl_->index.size()), impl_->record_count,
             impl_->file_bytes, impl_->live_value_bytes};
+}
+
+InspectionReport Store::inspect() const {
+    impl_->healthy();
+    InspectionReport report{};
+    report.file_bytes = impl_->file_bytes;
+    report.header_bytes = detail::file_header_size;
+    report.record_count = impl_->record_count;
+    report.put_records = impl_->put_records;
+    report.erase_records = impl_->erase_records;
+    report.live_keys = static_cast<std::uint64_t>(impl_->index.size());
+    report.superseded_records =
+        impl_->put_records >= report.live_keys ? (impl_->put_records - report.live_keys) : 0;
+    report.live_value_bytes = impl_->live_value_bytes;
+
+    std::uint64_t live_k_bytes = 0;
+    std::uint64_t live_rec_bytes = detail::file_header_size;
+    bool first = true;
+    for (const auto& [key, entry] : impl_->index) {
+        live_k_bytes += entry.key_size;
+        live_rec_bytes += detail::record_header_size + entry.key_size + entry.value_size;
+        if (first || entry.key_size < report.min_key_bytes) report.min_key_bytes = entry.key_size;
+        if (first || entry.key_size > report.max_key_bytes) report.max_key_bytes = entry.key_size;
+        if (first || entry.value_size < report.min_value_bytes) report.min_value_bytes = entry.value_size;
+        if (first || entry.value_size > report.max_value_bytes) {
+            report.max_value_bytes = entry.value_size;
+            report.largest_key = key;
+            report.largest_value_bytes = entry.value_size;
+        }
+        if (entry.value_size <= 64U) ++report.values_le_64;
+        else if (entry.value_size <= 1024U) ++report.values_le_1024;
+        else ++report.values_gt_1024;
+        first = false;
+    }
+    report.live_key_bytes = live_k_bytes;
+    report.live_record_bytes = live_rec_bytes;
+    report.reclaimable_bytes =
+        report.file_bytes >= live_rec_bytes ? (report.file_bytes - live_rec_bytes) : 0;
+    const auto denom = std::max<std::uint64_t>(1, live_rec_bytes);
+    report.space_amplification = static_cast<double>(report.file_bytes) / static_cast<double>(denom);
+    return report;
 }
 
 void Store::snapshot(const std::filesystem::path& destination) const {
